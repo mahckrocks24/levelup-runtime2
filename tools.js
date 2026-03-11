@@ -1,12 +1,20 @@
 'use strict';
 
-// All tool files live at repo root level
-const testAudit = require('./test-audit');
+/**
+ * Tool Registry — all registered tools.
+ * Sprint A: run_test_audit (validation only)
+ * Sprint B: seo_audit, keyword_research, content_brief
+ */
+
+const testAudit        = require('./test-audit');
+const seoAudit         = require('./tool-seo-audit');
+const keywordResearch  = require('./tool-keyword-research');
+const contentBrief     = require('./tool-content-brief');
 
 module.exports = [
     testAudit,
-    // Sprint B tools added here:
-    // require('./seo-audit'),
-    // require('./keyword-analysis'),
-    // require('./crm-contact-create'),
+    seoAudit,
+    keywordResearch,
+    contentBrief,
+    // Sprint C+ tools added here
 ];
