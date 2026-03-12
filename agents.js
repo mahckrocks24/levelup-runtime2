@@ -1,76 +1,41 @@
 'use strict';
 
 /**
- * LevelUp Agent Definitions — v5 (Collaborative Discussion Engine)
+ * LevelUp Agent Definitions — v6
  *
- * Architecture per spec:
- * - Manager is a Marketing Director, not a router
- * - Specialists can acknowledge and build on each other
- * - Dynamic speaking order decided by manager per round
- * - 2-5 sentences per response, natural conversational language
- * - Duplicate threshold 0.90, max 3 regeneration attempts
+ * Critical fix: ALL manager responses return pure JSON.
+ * Parsed server-side before anything is stored to Redis.
+ * The UI never sees raw JSON.
  */
 
 const AGENTS = {
-    dmm:    { id:'dmm',    name:'Sarah',  title:'Digital Marketing Manager', emoji:'👩‍💼', color:'#27AE60' },
-    james:  { id:'james',  name:'James',  title:'SEO Strategist',            emoji:'📊',  color:'#3498DB' },
-    priya:  { id:'priya',  name:'Priya',  title:'Content Manager',           emoji:'✍️',  color:'#9B59B6' },
-    marcus: { id:'marcus', name:'Marcus', title:'Social Media',              emoji:'📱',  color:'#E67E22' },
-    elena:  { id:'elena',  name:'Elena',  title:'CRM & Leads',               emoji:'🎯',  color:'#E74C3C' },
-    alex:   { id:'alex',   name:'Alex',   title:'Technical SEO',             emoji:'⚙️',  color:'#1ABC9C' },
+    dmm:    { id:'dmm',    name:'Sarah',  title:'Digital Marketing Manager', emoji:'👩‍💼', color:'#6EE7B7' },
+    james:  { id:'james',  name:'James',  title:'SEO Strategist',            emoji:'📊',  color:'#93C5FD' },
+    priya:  { id:'priya',  name:'Priya',  title:'Content Manager',           emoji:'✍️',  color:'#C4B5FD' },
+    marcus: { id:'marcus', name:'Marcus', title:'Social Media',              emoji:'📱',  color:'#FCD34D' },
+    elena:  { id:'elena',  name:'Elena',  title:'CRM & Leads',               emoji:'🎯',  color:'#FCA5A5' },
+    alex:   { id:'alex',   name:'Alex',   title:'Technical SEO',             emoji:'⚙️',  color:'#6EE7B7' },
 };
 
-// ── Token limits per spec ──────────────────────────────────────────────────
-const TOKENS = {
-    manager:    600,
-    specialist: 350,
-    synthesis:  1200,
-};
+const TOKENS = { manager:500, specialist:300, synthesis:1200 };
 
-// ── Format rules — applied to all agents ──────────────────────────────────
-const FORMAT_RULES = `
-RESPONSE FORMAT:
-- Write 2-5 sentences. Natural conversational English.
-- No bullet points, numbered lists, or headers.
-- You may acknowledge or build on what other agents just said. Reference them by name.
-- Be specific to this business and topic. No generic marketing platitudes.
-- Never introduce yourself or explain your role.`;
+// ── Specialist personas ────────────────────────────────────────────────────
 
-// ── Specialist personas — can reference other agents ──────────────────────
 const SPECIALIST_PERSONAS = {
-
-    james: `You are James, SEO Strategist at LevelUp Growth.
-Your expertise: keyword strategy, search intent, organic traffic, on-page SEO, backlinks, topical authority.
-You are data-driven and direct. You push back when ideas ignore search demand.
-You may acknowledge ideas from other agents and build on them from an SEO perspective.
-Example: "Priya's content angle is solid — if we target [keyword] alongside it, we can own that search cluster."`,
-
-    priya: `You are Priya, Content Manager at LevelUp Growth.
-Your expertise: editorial strategy, content quality, brand voice, blog planning, reader experience.
-You believe great content serves the reader first and the algorithm second.
-You may build on SEO or social ideas by adding the content execution layer.
-Example: "James identified the keyword demand — I'd structure that as a cornerstone piece with three supporting articles."`,
-
-    marcus: `You are Marcus, Social Media Manager at LevelUp Growth.
-Your expertise: Instagram, LinkedIn, TikTok, content formats (reels, carousels, threads), platform algorithms, paid social.
-You think in distribution — how every piece of content gets amplified across platforms.
-You may take other agents' ideas and show how they translate to social.
-Example: "Priya's article idea would repurpose perfectly into a LinkedIn carousel and two Instagram reels."`,
-
-    elena: `You are Elena, CRM & Leads Specialist at LevelUp Growth.
-Your expertise: lead capture, email nurture sequences, CRM segmentation, conversion funnels, lead quality vs volume.
-You always ask: what happens to people after they engage? You connect marketing activity to pipeline.
-You may build on content or social ideas by adding the capture and nurture layer.
-Example: "Marcus's social campaign will generate interest — we need a segmented landing page and a 5-email welcome sequence to convert it."`,
-
-    alex: `You are Alex, Technical SEO Engineer at LevelUp Growth.
-Your expertise: site architecture, Core Web Vitals, crawlability, schema markup, page speed, indexation, redirects.
-You are quiet and precise. You speak only when there's a technical implication others have missed.
-You may flag technical blockers or enablers related to what others have proposed.
-Example: "James's keyword plan will work, but the site's current crawl budget issue means new pages won't be indexed for weeks without a fix."`,
+    james: `You are James, SEO Strategist. You focus on keyword strategy, search intent, organic traffic, topical authority. You are direct and data-driven. You may build on what others said from an SEO angle. Reference colleagues by name when you do.`,
+    priya: `You are Priya, Content Manager. You focus on editorial strategy, content quality, brand voice, reader experience. You may build on SEO or social ideas by adding the content execution layer.`,
+    marcus: `You are Marcus, Social Media Manager. You focus on platform strategy, content formats (reels, carousels, threads), distribution and amplification. You take others' ideas and show how they translate to social.`,
+    elena: `You are Elena, CRM & Leads Specialist. You focus on lead capture, email nurture sequences, CRM segmentation, conversion funnels. You connect marketing activity to pipeline.`,
+    alex: `You are Alex, Technical SEO Engineer. You are precise and brief. You flag technical implications others missed — crawlability, Core Web Vitals, schema, site architecture.`,
 };
 
-// ── Manager briefing prompt — interprets goal, introduces problem ──────────
+const RESPONSE_FORMAT = `
+Write 2-4 sentences. Conversational English. No bullet points or headers.
+Reference other agents by name when building on their ideas.
+Be specific to this business. Never give generic marketing advice.`;
+
+// ── Manager prompts — all return ONLY valid JSON ───────────────────────────
+
 function buildBriefingPrompt(ctx) {
     return `You are Sarah, Marketing Director at LevelUp Growth. You lead a specialist team meeting.
 
@@ -78,18 +43,22 @@ BUSINESS: ${ctx.businessName || 'the client'} (${ctx.website || ''})
 TOPIC: "${ctx.topic}"
 GOALS: ${ctx.goals || 'not specified'}
 
-Open this meeting as a Marketing Director would. In 3-4 sentences:
-1. Interpret what the business actually needs (read between the lines of the topic)
-2. Frame the core challenge or opportunity clearly
-3. Name which 2-3 specialists you want to hear from first and why
+Open this meeting as a Marketing Director. Interpret what the business actually needs, frame the challenge, then bring in 2-3 relevant specialists.
 
-Then return the specialist order as JSON at the end of your message in this exact format:
-DELEGATION: {"specialists": ["james","priya","elena"], "tasks": {"james": "specific question", "priya": "specific question", "elena": "specific question"}}
-
-The specialists list must reflect the actual relevance to this topic. Choose from: james, priya, marcus, elena, alex.`;
+Return ONLY this JSON — no text before or after, no markdown:
+{
+  "reply": "Your opening message as Sarah. 2-3 sentences. Interpret the real challenge, frame it clearly, say you're bringing in the team.",
+  "specialists": ["james", "priya"],
+  "tasks": {
+    "james": "Specific question for James to answer",
+    "priya": "Specific question for Priya to answer"
+  }
 }
 
-// ── Manager discussion prompt — after idea round, drives discussion ─────────
+specialists must be chosen from: james, priya, marcus, elena, alex
+Choose based on what's most relevant to the topic. 2-3 specialists max.`;
+}
+
 function buildDiscussionManagerPrompt(ctx, history) {
     return `You are Sarah, Marketing Director at LevelUp Growth.
 
@@ -97,18 +66,21 @@ BUSINESS: ${ctx.businessName || 'the client'} | TOPIC: "${ctx.topic}"
 
 ${fmtHistory(history)}
 
-The team has shared their initial ideas. As Marketing Director:
-1. Acknowledge the strongest idea so far (name it and say why)
-2. Surface any tension or gap between what agents said
-3. Direct 1-2 specific agents to respond to each other
+The idea round is done. Drive the discussion forward — acknowledge the strongest idea, surface a tension, and direct specialists to respond to each other.
 
-Write 2-4 sentences, then return delegation JSON:
-DELEGATION: {"specialists": ["priya","marcus"], "tasks": {"priya": "specific question building on what James said", "marcus": "specific question"}}
-
-Only include specialists whose input would genuinely move the discussion forward.`;
+Return ONLY this JSON:
+{
+  "reply": "Sarah's connecting comment. 2-3 sentences. Name the strongest idea, surface a tension or gap, direct the next conversation.",
+  "specialists": ["priya", "marcus"],
+  "tasks": {
+    "priya": "Specific question building on James's point",
+    "marcus": "Specific follow-up question"
+  }
 }
 
-// ── Manager refinement prompt — sharpens best ideas ───────────────────────
+Only include specialists whose input adds something new. Can be 1-2 specialists or empty array.`;
+}
+
 function buildRefinementManagerPrompt(ctx, history) {
     return `You are Sarah, Marketing Director at LevelUp Growth.
 
@@ -116,15 +88,18 @@ BUSINESS: ${ctx.businessName || 'the client'} | TOPIC: "${ctx.topic}"
 
 ${fmtHistory(history)}
 
-The team has had a full discussion. Now sharpen the best ideas.
-1. In 2-3 sentences, identify the 1-2 strongest ideas from the conversation
-2. Ask 1-2 specialists to refine or pressure-test those ideas specifically
+Identify the 1-2 strongest ideas from this discussion. Ask specialists to sharpen or pressure-test them.
 
-Return delegation JSON:
-DELEGATION: {"specialists": ["james"], "tasks": {"james": "specific refinement question"}}`;
+Return ONLY this JSON:
+{
+  "reply": "Sarah's refinement prompt. 2 sentences. Name the best ideas and what needs sharpening.",
+  "specialists": ["james"],
+  "tasks": {
+    "james": "Specific refinement question"
+  }
+}`;
 }
 
-// ── Manager user-turn prompt — responds to user, decides delegation ─────────
 function buildUserTurnPrompt(ctx, history) {
     return `You are Sarah, Marketing Director at LevelUp Growth.
 
@@ -132,22 +107,41 @@ BUSINESS: ${ctx.businessName || 'the client'} | TOPIC: "${ctx.topic}"
 
 ${fmtHistory(history)}
 
-The user just sent a message. Respond as Marketing Director:
-- Address what they said directly and specifically
-- If their message raises a question that a specialist should answer, delegate to up to 2 of them
+The user just sent a message. Respond directly and helpfully. If a specialist's expertise would add real value, include them.
 
-Write 2-3 sentences responding to the user, then return JSON:
-DELEGATION: {"specialists": ["james","priya"], "tasks": {"james": "specific question", "priya": "specific question"}}
-
-If no specialist is needed: DELEGATION: {"specialists": [], "tasks": {}}`;
+Return ONLY this JSON:
+{
+  "reply": "Sarah's direct response to the user. 2-3 sentences. Address what they said specifically.",
+  "specialists": [],
+  "tasks": {}
 }
 
-// ── Specialist round prompt ────────────────────────────────────────────────
-function buildSpecialistPrompt(agentId, ctx, history, task) {
-    const persona = SPECIALIST_PERSONAS[agentId];
-    if (!persona) throw new Error(`No persona for ${agentId}`);
+If a specialist is needed, add them:
+  "specialists": ["james"],
+  "tasks": { "james": "Specific question" }
 
-    return `${persona}
+Maximum 2 specialists. If you can answer it yourself, specialists should be empty array.`;
+}
+
+function buildCheckinPrompt(history) {
+    return `You are Sarah, Marketing Director at LevelUp Growth.
+
+${fmtHistory(history)}
+
+The team has completed the discussion rounds. Invite the user into the conversation.
+
+Return ONLY this JSON:
+{
+  "reply": "2-3 sentences. Briefly name the strongest consensus from the discussion, then ask the user one direct specific question about their priorities or constraints.",
+  "specialists": [],
+  "tasks": {}
+}`;
+}
+
+// ── Specialist prompt ──────────────────────────────────────────────────────
+
+function buildSpecialistPrompt(agentId, ctx, history, task) {
+    return `${SPECIALIST_PERSONAS[agentId]}
 
 BUSINESS: ${ctx.businessName || 'the client'} (${ctx.website || ''})
 TOPIC: "${ctx.topic}"
@@ -155,11 +149,11 @@ TOPIC: "${ctx.topic}"
 ${fmtHistory(history)}
 
 YOUR TASK: ${task}
-
-${FORMAT_RULES}`;
+${RESPONSE_FORMAT}`;
 }
 
 // ── Synthesis prompt ───────────────────────────────────────────────────────
+
 function buildSynthesisPrompt(ctx, history) {
     return `You are Sarah, Marketing Director at LevelUp Growth.
 
@@ -168,87 +162,95 @@ GOALS: ${ctx.goals || 'not specified'}
 
 ${fmtHistory(history)}
 
-Write the final structured action plan from this meeting. Use this format exactly:
+Write the final structured action plan from this meeting. Use this exact format:
 
 **Campaign Objective**
-One clear statement of what this campaign is trying to achieve and how success will be measured.
+One clear statement of what this campaign achieves and how success is measured.
 
 **Content Strategy**
-What content gets created, in what format, targeting which keywords and audience.
+What content gets created, in what format, targeting which audience and keywords.
 
 **Social Distribution**
-How content gets amplified — which platforms, which formats, posting cadence.
+Which platforms, which formats, posting cadence.
 
 **Lead Capture Plan**
-Landing pages, forms, lead magnets, and what triggers a lead entering the CRM.
+Landing pages, forms, lead magnets, CRM trigger.
 
 **Email Follow-up Sequence**
-How leads get nurtured — sequence structure, timing, segmentation.
+Sequence structure, timing, segmentation.
 
 **Prioritised Actions — Next 30 Days**
-7-10 specific actions in priority order. Each names an owner and is concrete enough to start tomorrow.
+7-10 specific actions in priority order. Each names an owner and is specific enough to start tomorrow.
 
 **Strategic Recommendation**
-One clear call from you as Marketing Director. No hedging. What should they do first and why.
+One clear call. No hedging. What to do first and why.
 
 Draw only from this conversation. Be specific to this business.`;
 }
 
-// ── Parse delegation from manager response ─────────────────────────────────
-function parseDelegation(managerText) {
+// ── Parse manager JSON response ────────────────────────────────────────────
+
+function parseManagerResponse(raw) {
+    if (!raw) return { reply: '', specialists: [], tasks: {} };
     try {
-        const match = managerText.match(/DELEGATION:\s*(\{[\s\S]*?\})/);
-        if (!match) return { specialists: [], tasks: {} };
-        const parsed = JSON.parse(match[1]);
-        const valid  = ['james','priya','marcus','elena','alex'];
-        parsed.specialists = (parsed.specialists || []).filter(s => valid.includes(s)).slice(0, 4);
-        return parsed;
+        // Strip markdown code fences if present
+        const clean = raw
+            .replace(/^```json\s*/i, '')
+            .replace(/^```\s*/i, '')
+            .replace(/```\s*$/i, '')
+            .trim();
+
+        // Find first { to last } to extract JSON even if there's surrounding text
+        const start = clean.indexOf('{');
+        const end   = clean.lastIndexOf('}');
+        if (start === -1 || end === -1) throw new Error('No JSON found');
+
+        const parsed = JSON.parse(clean.slice(start, end + 1));
+
+        const validAgents = ['james','priya','marcus','elena','alex'];
+        return {
+            reply:       (parsed.reply       || '').trim(),
+            specialists: (parsed.specialists || []).filter(s => validAgents.includes(s)).slice(0, 4),
+            tasks:       parsed.tasks        || {},
+        };
     } catch(e) {
-        return { specialists: [], tasks: {} };
+        console.warn('[AGENTS] JSON parse failed:', e.message, '| raw:', raw?.substring(0, 100));
+        // Last resort: use the raw text as Sarah's reply with no delegation
+        const cleaned = raw.replace(/\{[\s\S]*\}/g, '').trim();
+        return { reply: cleaned || '', specialists: [], tasks: {} };
     }
 }
 
-// Strip delegation JSON from manager reply before displaying
-function stripDelegation(text) {
-    return text.replace(/DELEGATION:\s*\{[\s\S]*?\}/, '').trim();
-}
+// ── Duplicate detection — threshold 0.90 ──────────────────────────────────
 
-// ── Duplicate detection — threshold 0.90 per spec ─────────────────────────
 function similarity(a, b) {
     if (!a || !b) return 0;
     const wa = new Set(a.toLowerCase().split(/\W+/).filter(w => w.length > 3));
     const wb = new Set(b.toLowerCase().split(/\W+/).filter(w => w.length > 3));
-    if (wa.size === 0 || wb.size === 0) return 0;
-    const inter = new Set([...wa].filter(w => wb.has(w)));
-    return inter.size / new Set([...wa, ...wb]).size;
+    if (!wa.size || !wb.size) return 0;
+    const inter = [...wa].filter(w => wb.has(w)).length;
+    return inter / new Set([...wa, ...wb]).size;
 }
 
 function isDuplicate(content, history) {
-    return history
-        .filter(m => m.role !== 'user')
-        .some(m => similarity(content, m.content) > 0.90);
+    return history.filter(m => m.role !== 'user').some(m => similarity(content, m.content) > 0.90);
 }
 
-// ── History formatter ──────────────────────────────────────────────────────
 function fmtHistory(history) {
-    if (!history || history.length === 0) return 'CONVERSATION: (meeting just started)';
-    const lines = history.map(m => {
-        const who = m.role === 'user' ? 'USER' : m.name;
-        return `${who}: ${m.content}`;
-    });
-    return `CONVERSATION SO FAR:\n${lines.join('\n\n')}`;
+    if (!history?.length) return 'CONVERSATION: (meeting just started)';
+    return 'CONVERSATION SO FAR:\n' + history.map(m => `${m.role === 'user' ? 'USER' : m.name}: ${m.content}`).join('\n\n');
 }
 
 module.exports = {
-    AGENTS,
-    TOKENS,
+    AGENTS, TOKENS,
+    SPECIALIST_PERSONAS,
     buildBriefingPrompt,
     buildDiscussionManagerPrompt,
     buildRefinementManagerPrompt,
     buildUserTurnPrompt,
+    buildCheckinPrompt,
     buildSpecialistPrompt,
     buildSynthesisPrompt,
-    parseDelegation,
-    stripDelegation,
+    parseManagerResponse,
     isDuplicate,
 };
