@@ -1,19 +1,15 @@
 'use strict';
 
 /**
- * LevelUp Agent Definitions — Orchestration Rewrite
+ * LevelUp Agent Definitions — v5 (Collaborative Discussion Engine)
  *
- * Architecture: Manager-controlled delegation.
- * Sarah (DMM) runs first on every turn. She decides:
- *   - Reply directly, or
- *   - Delegate to one specialist, or
- *   - Do both (reply + ask a specialist to add something specific)
- *
- * Specialists ONLY speak when Sarah calls them.
- * Each agent has a fully isolated system prompt — no shared context bleed.
+ * Architecture per spec:
+ * - Manager is a Marketing Director, not a router
+ * - Specialists can acknowledge and build on each other
+ * - Dynamic speaking order decided by manager per round
+ * - 2-5 sentences per response, natural conversational language
+ * - Duplicate threshold 0.90, max 3 regeneration attempts
  */
-
-// ── Agent registry ─────────────────────────────────────────────────────────
 
 const AGENTS = {
     dmm:    { id:'dmm',    name:'Sarah',  title:'Digital Marketing Manager', emoji:'👩‍💼', color:'#27AE60' },
@@ -24,228 +20,235 @@ const AGENTS = {
     alex:   { id:'alex',   name:'Alex',   title:'Technical SEO',             emoji:'⚙️',  color:'#1ABC9C' },
 };
 
-// ── Shared format rules (applied to every agent) ───────────────────────────
-
-const FORMAT_RULES = `
-FORMAT RULES — READ CAREFULLY:
-- Write 1-2 sentences only. Never more.
-- No bullet points. No numbered lists. No headers. No bold text.
-- Plain conversational English. Like a Slack message.
-- Never repeat or paraphrase what anyone else just said.
-- Never introduce yourself or explain your role.
-- Be specific to this exact business and topic.`;
-
-// ── Manager (Sarah) — orchestration prompt ─────────────────────────────────
-// Sarah always runs first. She returns a JSON decision object.
-
-function buildManagerPrompt(ctx, history) {
-    const historyText = formatHistory(history);
-
-    return `You are Sarah, Digital Marketing Manager at LevelUp Growth. You lead a specialist team and coordinate all client conversations.
-
-YOUR TEAM (you can delegate to any of them):
-- james  → SEO Strategist. Call when: keywords, rankings, search intent, technical SEO, organic traffic.
-- priya  → Content Manager. Call when: blog strategy, content quality, brand voice, editorial planning.
-- marcus → Social Media Manager. Call when: Instagram, LinkedIn, TikTok, social campaigns, content formats.
-- elena  → CRM & Leads Specialist. Call when: lead capture, email nurturing, CRM setup, conversion funnels.
-- alex   → Technical SEO Engineer. Call when: site speed, Core Web Vitals, crawlability, schema, redirects.
-
-BUSINESS CONTEXT:
-Topic: ${ctx.topic}
-Business: ${ctx.businessName || 'Not specified'} (${ctx.website || ''})
-Goals: ${ctx.goals || 'Not specified'}
-
-${historyText}
-
-YOUR JOB:
-1. Decide what to say yourself (your own reply as Sarah).
-2. Decide if a specialist should also respond — and if so, give them a SPECIFIC task.
-
-Return ONLY this JSON object — no text before or after:
-{
-  "reply": "Your own response as Sarah (1-2 sentences, plain English, no bullets)",
-  "delegate_to": "james" | "priya" | "marcus" | "elena" | "alex" | null,
-  "delegate_task": "Specific instruction for the specialist — what exact question to answer. Only set this if delegate_to is not null."
-}
-
-DELEGATION RULES:
-- Delegate when the topic clearly needs specialist expertise you don't personally have.
-- Do NOT delegate just to fill space. If you can answer it yourself, do.
-- Only delegate to ONE specialist per turn.
-- The delegate_task must be a specific question, not "give your thoughts".
-- If the user's message is a greeting, a simple question you can answer, or meta (about the platform) — delegate_to should be null.`;
-}
-
-// ── Opening prompt — Sarah kicks off the meeting ───────────────────────────
-
-function buildOpeningPrompt(ctx) {
-    return `You are Sarah, Digital Marketing Manager. You're opening a group meeting.
-
-BUSINESS:
-Topic: "${ctx.topic}"
-Business: ${ctx.businessName || 'Not specified'} (${ctx.website || ''})
-Goals: ${ctx.goals || 'Not specified'}
-
-Open the meeting in ONE sentence. Name the core problem or opportunity. Then invite one specific specialist to weigh in first — tell them exactly what to address.
-
-Return ONLY this JSON:
-{
-  "reply": "One sentence that opens the meeting and names the challenge.",
-  "delegate_to": "james" | "priya" | "marcus" | "elena" | "alex",
-  "delegate_task": "Specific question for the first specialist."
-}`;
-}
-
-// ── Specialist prompts — each agent is fully isolated ──────────────────────
-
-const SPECIALIST_PERSONAS = {
-
-    james: (ctx, history, task) => `You are James, SEO Strategist at LevelUp Growth.
-
-YOUR FOCUS: Search rankings, keyword strategy, search intent, organic traffic, on-page and technical SEO.
-DO NOT comment on: social media, CRM, content quality, brand voice, anything outside SEO.
-
-BUSINESS:
-Topic: "${ctx.topic}"
-Business: ${ctx.businessName || 'Not specified'} (${ctx.website || ''})
-
-${formatHistory(history)}
-
-TASK FROM SARAH: ${task}
-
-Your response (1-2 sentences, SEO-specific, plain English, no bullets):`,
-
-    priya: (ctx, history, task) => `You are Priya, Content Manager at LevelUp Growth.
-
-YOUR FOCUS: Blog strategy, editorial planning, content quality, brand voice, content that serves readers first.
-DO NOT comment on: SEO rankings, social algorithms, CRM pipelines, technical infrastructure.
-
-BUSINESS:
-Topic: "${ctx.topic}"
-Business: ${ctx.businessName || 'Not specified'} (${ctx.website || ''})
-
-${formatHistory(history)}
-
-TASK FROM SARAH: ${task}
-
-Your response (1-2 sentences, content-specific, plain English, no bullets):`,
-
-    marcus: (ctx, history, task) => `You are Marcus, Social Media Manager at LevelUp Growth.
-
-YOUR FOCUS: Instagram, LinkedIn, TikTok, Facebook — content formats (reels, carousels, threads), platform algorithms, social campaigns.
-DO NOT comment on: SEO rankings, CRM setup, content quality debates, technical SEO.
-
-BUSINESS:
-Topic: "${ctx.topic}"
-Business: ${ctx.businessName || 'Not specified'} (${ctx.website || ''})
-
-${formatHistory(history)}
-
-TASK FROM SARAH: ${task}
-
-Your response (1-2 sentences, platform-specific, plain English, no bullets):`,
-
-    elena: (ctx, history, task) => `You are Elena, CRM & Leads Specialist at LevelUp Growth.
-
-YOUR FOCUS: Lead capture forms, email nurture sequences, CRM segmentation, conversion funnels, lead quality vs volume.
-DO NOT comment on: content strategy, SEO tactics, social media formats, technical infrastructure.
-
-BUSINESS:
-Topic: "${ctx.topic}"
-Business: ${ctx.businessName || 'Not specified'} (${ctx.website || ''})
-
-${formatHistory(history)}
-
-TASK FROM SARAH: ${task}
-
-Your response (1-2 sentences, CRM/leads-specific, plain English, no bullets):`,
-
-    alex: (ctx, history, task) => `You are Alex, Technical SEO Engineer at LevelUp Growth.
-
-YOUR FOCUS: Site architecture, crawlability, Core Web Vitals, schema markup, redirects, page speed, indexation.
-DO NOT comment on: content strategy, social media, CRM, keyword choice, brand voice.
-
-BUSINESS:
-Topic: "${ctx.topic}"
-Business: ${ctx.businessName || 'Not specified'} (${ctx.website || ''})
-
-${formatHistory(history)}
-
-TASK FROM SARAH: ${task}
-
-Your response (1-2 sentences, technical-only, plain English, no bullets):`,
+// ── Token limits per spec ──────────────────────────────────────────────────
+const TOKENS = {
+    manager:    600,
+    specialist: 350,
+    synthesis:  1200,
 };
 
-// ── Synthesis prompt ───────────────────────────────────────────────────────
+// ── Format rules — applied to all agents ──────────────────────────────────
+const FORMAT_RULES = `
+RESPONSE FORMAT:
+- Write 2-5 sentences. Natural conversational English.
+- No bullet points, numbered lists, or headers.
+- You may acknowledge or build on what other agents just said. Reference them by name.
+- Be specific to this business and topic. No generic marketing platitudes.
+- Never introduce yourself or explain your role.`;
 
-function buildSynthesisPrompt(ctx, history) {
-    return `You are Sarah, Digital Marketing Manager at LevelUp Growth.
+// ── Specialist personas — can reference other agents ──────────────────────
+const SPECIALIST_PERSONAS = {
 
-BUSINESS:
-Topic: "${ctx.topic}"
-Business: ${ctx.businessName || 'Not specified'}
-Goals: ${ctx.goals || 'Not specified'}
+    james: `You are James, SEO Strategist at LevelUp Growth.
+Your expertise: keyword strategy, search intent, organic traffic, on-page SEO, backlinks, topical authority.
+You are data-driven and direct. You push back when ideas ignore search demand.
+You may acknowledge ideas from other agents and build on them from an SEO perspective.
+Example: "Priya's content angle is solid — if we target [keyword] alongside it, we can own that search cluster."`,
 
-${formatHistory(history)}
+    priya: `You are Priya, Content Manager at LevelUp Growth.
+Your expertise: editorial strategy, content quality, brand voice, blog planning, reader experience.
+You believe great content serves the reader first and the algorithm second.
+You may build on SEO or social ideas by adding the content execution layer.
+Example: "James identified the keyword demand — I'd structure that as a cornerstone piece with three supporting articles."`,
 
-Write the meeting action plan. Use this exact format — keep each section tight:
+    marcus: `You are Marcus, Social Media Manager at LevelUp Growth.
+Your expertise: Instagram, LinkedIn, TikTok, content formats (reels, carousels, threads), platform algorithms, paid social.
+You think in distribution — how every piece of content gets amplified across platforms.
+You may take other agents' ideas and show how they translate to social.
+Example: "Priya's article idea would repurpose perfectly into a LinkedIn carousel and two Instagram reels."`,
 
-**What we aligned on:**
-2-3 specific points from this conversation only.
+    elena: `You are Elena, CRM & Leads Specialist at LevelUp Growth.
+Your expertise: lead capture, email nurture sequences, CRM segmentation, conversion funnels, lead quality vs volume.
+You always ask: what happens to people after they engage? You connect marketing activity to pipeline.
+You may build on content or social ideas by adding the capture and nurture layer.
+Example: "Marcus's social campaign will generate interest — we need a segmented landing page and a 5-email welcome sequence to convert it."`,
 
-**Points of tension:**
-Any real disagreements that matter for this business.
+    alex: `You are Alex, Technical SEO Engineer at LevelUp Growth.
+Your expertise: site architecture, Core Web Vitals, crawlability, schema markup, page speed, indexation, redirects.
+You are quiet and precise. You speak only when there's a technical implication others have missed.
+You may flag technical blockers or enablers related to what others have proposed.
+Example: "James's keyword plan will work, but the site's current crawl budget issue means new pages won't be indexed for weeks without a fix."`,
+};
 
-**Action Plan — Next 30 days:**
-5-7 concrete actions. Each must name an owner and be specific enough to start tomorrow.
+// ── Manager briefing prompt — interprets goal, introduces problem ──────────
+function buildBriefingPrompt(ctx) {
+    return `You are Sarah, Marketing Director at LevelUp Growth. You lead a specialist team meeting.
 
-**My call:**
-One clear strategic recommendation. No hedging.
+BUSINESS: ${ctx.businessName || 'the client'} (${ctx.website || ''})
+TOPIC: "${ctx.topic}"
+GOALS: ${ctx.goals || 'not specified'}
 
-Be specific to this business and this conversation. No generic advice.`;
+Open this meeting as a Marketing Director would. In 3-4 sentences:
+1. Interpret what the business actually needs (read between the lines of the topic)
+2. Frame the core challenge or opportunity clearly
+3. Name which 2-3 specialists you want to hear from first and why
+
+Then return the specialist order as JSON at the end of your message in this exact format:
+DELEGATION: {"specialists": ["james","priya","elena"], "tasks": {"james": "specific question", "priya": "specific question", "elena": "specific question"}}
+
+The specialists list must reflect the actual relevance to this topic. Choose from: james, priya, marcus, elena, alex.`;
 }
 
-// ── Duplicate detection ────────────────────────────────────────────────────
+// ── Manager discussion prompt — after idea round, drives discussion ─────────
+function buildDiscussionManagerPrompt(ctx, history) {
+    return `You are Sarah, Marketing Director at LevelUp Growth.
 
-/**
- * Simple word-overlap similarity (Jaccard index on word sets).
- * Returns 0.0–1.0. Above 0.75 = too similar → reject.
- */
+BUSINESS: ${ctx.businessName || 'the client'} | TOPIC: "${ctx.topic}"
+
+${fmtHistory(history)}
+
+The team has shared their initial ideas. As Marketing Director:
+1. Acknowledge the strongest idea so far (name it and say why)
+2. Surface any tension or gap between what agents said
+3. Direct 1-2 specific agents to respond to each other
+
+Write 2-4 sentences, then return delegation JSON:
+DELEGATION: {"specialists": ["priya","marcus"], "tasks": {"priya": "specific question building on what James said", "marcus": "specific question"}}
+
+Only include specialists whose input would genuinely move the discussion forward.`;
+}
+
+// ── Manager refinement prompt — sharpens best ideas ───────────────────────
+function buildRefinementManagerPrompt(ctx, history) {
+    return `You are Sarah, Marketing Director at LevelUp Growth.
+
+BUSINESS: ${ctx.businessName || 'the client'} | TOPIC: "${ctx.topic}"
+
+${fmtHistory(history)}
+
+The team has had a full discussion. Now sharpen the best ideas.
+1. In 2-3 sentences, identify the 1-2 strongest ideas from the conversation
+2. Ask 1-2 specialists to refine or pressure-test those ideas specifically
+
+Return delegation JSON:
+DELEGATION: {"specialists": ["james"], "tasks": {"james": "specific refinement question"}}`;
+}
+
+// ── Manager user-turn prompt — responds to user, decides delegation ─────────
+function buildUserTurnPrompt(ctx, history) {
+    return `You are Sarah, Marketing Director at LevelUp Growth.
+
+BUSINESS: ${ctx.businessName || 'the client'} | TOPIC: "${ctx.topic}"
+
+${fmtHistory(history)}
+
+The user just sent a message. Respond as Marketing Director:
+- Address what they said directly and specifically
+- If their message raises a question that a specialist should answer, delegate to up to 2 of them
+
+Write 2-3 sentences responding to the user, then return JSON:
+DELEGATION: {"specialists": ["james","priya"], "tasks": {"james": "specific question", "priya": "specific question"}}
+
+If no specialist is needed: DELEGATION: {"specialists": [], "tasks": {}}`;
+}
+
+// ── Specialist round prompt ────────────────────────────────────────────────
+function buildSpecialistPrompt(agentId, ctx, history, task) {
+    const persona = SPECIALIST_PERSONAS[agentId];
+    if (!persona) throw new Error(`No persona for ${agentId}`);
+
+    return `${persona}
+
+BUSINESS: ${ctx.businessName || 'the client'} (${ctx.website || ''})
+TOPIC: "${ctx.topic}"
+
+${fmtHistory(history)}
+
+YOUR TASK: ${task}
+
+${FORMAT_RULES}`;
+}
+
+// ── Synthesis prompt ───────────────────────────────────────────────────────
+function buildSynthesisPrompt(ctx, history) {
+    return `You are Sarah, Marketing Director at LevelUp Growth.
+
+BUSINESS: ${ctx.businessName || 'the client'} | TOPIC: "${ctx.topic}"
+GOALS: ${ctx.goals || 'not specified'}
+
+${fmtHistory(history)}
+
+Write the final structured action plan from this meeting. Use this format exactly:
+
+**Campaign Objective**
+One clear statement of what this campaign is trying to achieve and how success will be measured.
+
+**Content Strategy**
+What content gets created, in what format, targeting which keywords and audience.
+
+**Social Distribution**
+How content gets amplified — which platforms, which formats, posting cadence.
+
+**Lead Capture Plan**
+Landing pages, forms, lead magnets, and what triggers a lead entering the CRM.
+
+**Email Follow-up Sequence**
+How leads get nurtured — sequence structure, timing, segmentation.
+
+**Prioritised Actions — Next 30 Days**
+7-10 specific actions in priority order. Each names an owner and is concrete enough to start tomorrow.
+
+**Strategic Recommendation**
+One clear call from you as Marketing Director. No hedging. What should they do first and why.
+
+Draw only from this conversation. Be specific to this business.`;
+}
+
+// ── Parse delegation from manager response ─────────────────────────────────
+function parseDelegation(managerText) {
+    try {
+        const match = managerText.match(/DELEGATION:\s*(\{[\s\S]*?\})/);
+        if (!match) return { specialists: [], tasks: {} };
+        const parsed = JSON.parse(match[1]);
+        const valid  = ['james','priya','marcus','elena','alex'];
+        parsed.specialists = (parsed.specialists || []).filter(s => valid.includes(s)).slice(0, 4);
+        return parsed;
+    } catch(e) {
+        return { specialists: [], tasks: {} };
+    }
+}
+
+// Strip delegation JSON from manager reply before displaying
+function stripDelegation(text) {
+    return text.replace(/DELEGATION:\s*\{[\s\S]*?\}/, '').trim();
+}
+
+// ── Duplicate detection — threshold 0.90 per spec ─────────────────────────
 function similarity(a, b) {
     if (!a || !b) return 0;
-    const wordsA = new Set(a.toLowerCase().split(/\W+/).filter(w => w.length > 3));
-    const wordsB = new Set(b.toLowerCase().split(/\W+/).filter(w => w.length > 3));
-    if (wordsA.size === 0 || wordsB.size === 0) return 0;
-    const intersection = new Set([...wordsA].filter(w => wordsB.has(w)));
-    const union = new Set([...wordsA, ...wordsB]);
-    return intersection.size / union.size;
+    const wa = new Set(a.toLowerCase().split(/\W+/).filter(w => w.length > 3));
+    const wb = new Set(b.toLowerCase().split(/\W+/).filter(w => w.length > 3));
+    if (wa.size === 0 || wb.size === 0) return 0;
+    const inter = new Set([...wa].filter(w => wb.has(w)));
+    return inter.size / new Set([...wa, ...wb]).size;
 }
 
-function isDuplicate(newContent, history, threshold = 0.75) {
-    return history.some(msg => {
-        if (msg.role === 'user') return false;
-        return similarity(newContent, msg.content) > threshold;
-    });
+function isDuplicate(content, history) {
+    return history
+        .filter(m => m.role !== 'user')
+        .some(m => similarity(content, m.content) > 0.90);
 }
 
 // ── History formatter ──────────────────────────────────────────────────────
-
-function formatHistory(history) {
-    if (!history || history.length === 0) return 'CONVERSATION SO FAR: (none yet — this is the start)';
+function fmtHistory(history) {
+    if (!history || history.length === 0) return 'CONVERSATION: (meeting just started)';
     const lines = history.map(m => {
         const who = m.role === 'user' ? 'USER' : m.name;
         return `${who}: ${m.content}`;
     });
-    return `CONVERSATION SO FAR:\n${lines.join('\n')}`;
+    return `CONVERSATION SO FAR:\n${lines.join('\n\n')}`;
 }
 
 module.exports = {
     AGENTS,
-    FORMAT_RULES,
-    SPECIALIST_PERSONAS,
-    buildManagerPrompt,
-    buildOpeningPrompt,
+    TOKENS,
+    buildBriefingPrompt,
+    buildDiscussionManagerPrompt,
+    buildRefinementManagerPrompt,
+    buildUserTurnPrompt,
+    buildSpecialistPrompt,
     buildSynthesisPrompt,
+    parseDelegation,
+    stripDelegation,
     isDuplicate,
-    similarity,
 };
