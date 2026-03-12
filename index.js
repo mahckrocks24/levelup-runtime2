@@ -126,6 +126,8 @@ app.get('/internal/meeting/:id/status', requireSecret, async (req, res) => {
             phase:           m.phase || 'opening',
             messages:        m.messages || [],
             message_count:   (m.messages||[]).length,
+            spokenAgents:    m.spokenAgents || [],
+            files:           m.files || [],
             completed_at:    m.completed_at || null,
             error:           m.error || null,
         });
@@ -156,6 +158,49 @@ app.post('/internal/meeting/:id/dm', requireSecret, async (req, res) => {
 app.post('/internal/meeting/:id/dm', requireSecret, async (req,res) => {
     try { const {agentId,content}=req.body; res.json(await directMessage(req.params.id,agentId,content)); }
     catch(e){ res.status(500).json({error:e.message}); }
+});
+
+/** File upload to meeting */
+app.post('/internal/meeting/:id/upload', requireSecret, (req, res) => {
+    const multer  = (() => { try { return require('multer'); } catch(e) { return null; } })();
+    if (!multer) return res.status(501).json({ error: 'multer not installed. Run: npm install multer' });
+    const fs   = require('fs');
+    const path = require('path');
+    const uploadDir = path.join(__dirname, 'uploads', 'meeting-files');
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+    const upload = multer({ dest: uploadDir, limits: { fileSize: 20 * 1024 * 1024 } });
+    upload.single('file')(req, res, async (err) => {
+        if (err) return res.status(400).json({ error: err.message });
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+        const ext  = path.extname(req.file.originalname).toLowerCase();
+        const safe = req.file.filename + ext;
+        const dest = path.join(uploadDir, safe);
+        fs.renameSync(req.file.path, dest);
+        const fileInfo = {
+            name: req.file.originalname,
+            type: req.file.mimetype,
+            size: req.file.size,
+            url:  `/uploads/meeting-files/${safe}`,
+            path: dest,
+        };
+        try {
+            const { addFileToMeeting } = require('./meeting-room');
+            await addFileToMeeting(req.params.id, fileInfo);
+            res.json({ ok: true, file: fileInfo });
+        } catch(e) { res.status(500).json({ error: e.message }); }
+    });
+});
+
+/** Serve uploaded files */
+app.use('/uploads', require('express').static(require('path').join(__dirname, 'uploads')));
+
+/** Register file in meeting state (called from WP upload handler) */
+app.post('/internal/meeting/:id/state-file', requireSecret, async (req,res) => {
+    try {
+        const { addFileToMeeting } = require('./meeting-room');
+        await addFileToMeeting(req.params.id, req.body.file||{});
+        res.json({ok:true});
+    } catch(e) { res.status(500).json({error:e.message}); }
 });
 
 /** Get pending tasks awaiting approval */
