@@ -40,6 +40,21 @@ async function setState(id, status, extra = {}) {
     await saveMeeting(id, m);
 }
 
+// ── Acknowledgement lines per agent ──────────────────────────────────────
+const ACKS = {
+    james:  ["On it — pulling the keyword data now.", "Sure, give me a second.", "Let me check the numbers on that.", "One sec — running the search intent analysis.", "Got it, pulling that up."],
+    priya:  ["On it — drafting that now.", "Sure, give me a moment.", "Let me think through the content structure.", "One sec — mapping that out.", "Got it."],
+    marcus: ["On it — checking the platform data.", "Sure, one sec.", "Let me pull up the format breakdown.", "Give me a moment on that.", "Got it — looking at the numbers."],
+    elena:  ["On it — mapping the funnel logic.", "Sure, one second.", "Let me pull the CRM framework for this.", "Give me a moment.", "Got it."],
+    alex:   ["Checking the technical side now.", "One sec.", "Let me run through the architecture on that.", "Sure — pulling the audit data.", "On it."],
+    dmm:    ["Got it.", "One second.", "On it."],
+};
+
+function getAck(agentId) {
+    const list = ACKS[agentId] || ["On it."];
+    return list[Math.floor(Math.random() * list.length)];
+}
+
 // ── LLM: Deliberation step ────────────────────────────────────────────────
 async function runDeliberation(agentId, history, task, meetingState) {
     try {
@@ -367,8 +382,12 @@ async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
     await setState(mid, 'speaking_dmm', { current_speaker: 'dmm' });
     const sarahRes = await callManager(buildUserTurnPrompt(ctx, histWithUser, stateStr, memStr), mid);
     if (sarahRes.reply) { await postAgent(mid, 'dmm', sarahRes.reply); await sleep(300); }
-    if (sarahRes.specialists.length) {
-        await runRound(mid, ctx, sarahRes.specialists, sarahRes.tasks);
+
+    // Routing fix: if Sarah named an agent in her reply but forgot to add them to specialists, add them
+    const namedInReply = extractNamedAgents(sarahRes.reply);
+    const mergedSpecs = [...new Set([...sarahRes.specialists, ...namedInReply])];
+    if (mergedSpecs.length) {
+        await runRound(mid, ctx, mergedSpecs, sarahRes.tasks);
     }
     await setState(mid, 'open', { current_speaker: null });
 }
@@ -514,6 +533,17 @@ async function addFileToMeeting(mid, fileInfo) {
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Scan Sarah's reply text for agent first names and return their IDs
+function extractNamedAgents(text) {
+    if (!text) return [];
+    const nameMap = { james:'james', priya:'priya', marcus:'marcus', elena:'elena', alex:'alex' };
+    const found = [];
+    for (const [name, id] of Object.entries(nameMap)) {
+        if (new RegExp(`\\b${name}\\b`, 'i').test(text) && !found.includes(id)) found.push(id);
+    }
+    return found;
+}
 
 module.exports = {
     startMeeting, getMeeting, userMessage, directMessage,
