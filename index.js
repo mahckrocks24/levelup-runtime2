@@ -8,7 +8,9 @@ const { assembleSystemPrompt, getToolDefinitionsForLLM } = require('./prompt-ass
 const { runAgentLoop }             = require('./llm');
 const { getHistory, appendMessage, formatForLLM } = require('./conversation');
 const { startMeeting, getMeeting, userMessage, directMessage, wrapUpMeeting, getPendingTasks, clearPendingTasks } = require('./meeting-room');
-const registry                     = require('./registry');
+const taskMemory   = require('./task-memory');
+const taskWorker   = require('./task-worker');
+const registry     = require('./registry');
 const { v4: uuidv4 }               = require('uuid');
 
 const app  = express();
@@ -222,6 +224,88 @@ app.post('/internal/meeting/:id/wrap', requireSecret, async (req, res) => {
         if (result.error) return res.status(400).json(result);
         res.json(result);
     } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+// ── Sprint D: Task Memory & Projects ──────────────────────────────────────
+
+/** Import approved task from WP → task memory */
+app.post('/internal/tasks/import', requireSecret, async (req, res) => {
+    try {
+        const { wsId = 1, task } = req.body;
+        if (!task?.id) return res.status(400).json({ error: 'task.id required.' });
+        const imported = await taskMemory.importApprovedTask(wsId, task);
+        res.json({ ok: true, task: imported });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Get all tasks for workspace */
+app.get('/internal/tasks', requireSecret, async (req, res) => {
+    try {
+        const wsId  = parseInt(req.query.wsId || 1);
+        const tasks = await taskMemory.getAllTasks(wsId);
+        res.json({ tasks });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Get single task with full history + deliverable */
+app.get('/internal/tasks/:id', requireSecret, async (req, res) => {
+    try {
+        const wsId = parseInt(req.query.wsId || 1);
+        const task = await taskMemory.getTask(wsId, req.params.id);
+        if (!task) return res.status(404).json({ error: 'Task not found.' });
+        res.json(task);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Update task status — triggers agent delivery when moving to in_progress */
+app.put('/internal/tasks/:id/status', requireSecret, async (req, res) => {
+    try {
+        const { wsId = 1, status, note, by = 'user' } = req.body;
+        if (!status) return res.status(400).json({ error: 'status required.' });
+        const result = await taskMemory.updateStatus(wsId, req.params.id, status, { note, by });
+        if (!result) return res.status(404).json({ error: 'Task not found.' });
+
+        // Trigger agent delivery when moved to in_progress
+        if (status === taskMemory.STATUS.IN_PROGRESS) {
+            taskWorker.triggerTaskDelivery(wsId, req.params.id)
+                .catch(err => console.error(`[TASK] Delivery error:`, err.message));
+        }
+
+        res.json({ ok: true, task: result.task, oldStatus: result.oldStatus });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Add a note to a task */
+app.post('/internal/tasks/:id/note', requireSecret, async (req, res) => {
+    try {
+        const { wsId = 1, author, author_name, content, type = 'user' } = req.body;
+        const task = await taskMemory.addNote(wsId, req.params.id, { author, author_name, content, type });
+        if (!task) return res.status(404).json({ error: 'Task not found.' });
+        res.json({ ok: true, task });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Get workspace memory */
+app.get('/internal/workspace-memory', requireSecret, async (req, res) => {
+    try {
+        const wsId   = parseInt(req.query.wsId || 1);
+        const memory = await require('./workspace-memory').getMemory(wsId);
+        res.json(memory);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Update workspace memory field */
+app.post('/internal/workspace-memory', requireSecret, async (req, res) => {
+    try {
+        const { wsId = 1, field, value } = req.body;
+        const wsMem  = require('./workspace-memory');
+        const memory = await wsMem.getMemory(wsId);
+        if (field && value !== undefined) {
+            memory[field] = value;
+            await wsMem.saveMemory(wsId, memory);
+        }
+        res.json({ ok: true, memory });
+    } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── 404 ────────────────────────────────────────────────────────────────────
