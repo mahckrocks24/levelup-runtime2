@@ -465,6 +465,85 @@ function fmtHistory(history) {
         }).join('\n\n');
 }
 
+// ── Global Assistant prompt ───────────────────────────────────────────────
+const ASSISTANT_TOOLS = [
+    { name:'assign_task',         description:'Assign a task to one or more agents immediately' },
+    { name:'start_meeting',       description:'Start a Strategy Room session with a topic' },
+    { name:'navigate',            description:'Navigate to a platform view (workspace/meeting/projects/agents/reports)' },
+    { name:'show_agent_workload', description:'Show workload summary for all or specific agents' },
+    { name:'list_tasks',          description:'List tasks filtered by status, assignee, or priority' },
+    { name:'summarize_meeting',   description:'Summarize the current or recent Strategy Room session' },
+    { name:'ask_agent',           description:'Consult a specific agent for their expert opinion' },
+];
+
+function buildAssistantPrompt(message, context) {
+    const { view, tasks=[], agents=[], meeting=null, workload=[] } = context||{};
+
+    const taskSummary = tasks.length
+        ? tasks.slice(0,20).map(t=>`- [${t.status}] "${t.title}" → ${t.assignee}${t.assignees?.length>1?' (+others)':''}`).join('\n')
+        : 'No tasks yet.';
+
+    const workloadSummary = workload.length
+        ? workload.map(w=>`- ${w.name}: ${w.state} (${w.active} active tasks)`).join('\n')
+        : '';
+
+    const meetingContext = meeting
+        ? `ACTIVE MEETING: "${meeting.topic}" — Phase: ${meeting.phase||'active'} — ${meeting.message_count||0} messages exchanged.`
+        : 'No active meeting.';
+
+    const toolDefs = ASSISTANT_TOOLS.map(t=>`  ${t.name}: ${t.description}`).join('\n');
+
+    return `You are the LevelUp Platform AI Assistant — the central intelligence layer for a team of 6 AI marketing agents (Sarah/DMM, James/SEO, Priya/Content, Marcus/Social, Elena/CRM, Alex/TechSEO).
+
+CURRENT VIEW: ${view||'workspace'}
+
+PLATFORM STATE:
+${meetingContext}
+
+TASKS (${tasks.length} total):
+${taskSummary}
+
+AGENT WORKLOAD:
+${workloadSummary||'(load data not available)'}
+
+YOUR CAPABILITIES:
+You can answer questions about the platform, execute actions, and consult agents.
+
+AVAILABLE TOOLS:
+${toolDefs}
+
+RESPONSE RULES:
+1. Answer platform questions directly using the state above.
+2. If the user wants to DO something, respond with a JSON tool call block:
+<assistant_tool>
+{
+  "tool": "tool_name",
+  "params": { ... }
+}
+</assistant_tool>
+3. For ask_agent, include: { "tool": "ask_agent", "params": { "agent": "james", "question": "..." } }
+4. For assign_task: { "tool": "assign_task", "params": { "assignees": ["priya","marcus"], "title": "...", "description": "...", "priority": "high" } }
+5. For start_meeting: { "tool": "start_meeting", "params": { "topic": "..." } }
+6. For navigate: { "tool": "navigate", "params": { "view": "projects" } }
+7. Be concise. 2-4 sentences max unless asked for detail. Use agent names naturally.
+8. If consulting an agent (ask_agent), the agent's response will follow — don't answer on their behalf.
+9. Never invent task data. Only reference what's in PLATFORM STATE.`;
+}
+
+function buildAgentConsultPrompt(agentId, question, context) {
+    const persona = SPECIALIST_PERSONAS[agentId];
+    if (!persona) return `You are ${AGENTS[agentId]?.name||agentId}. Answer: ${question}`;
+    const { tasks=[] } = context||{};
+    const agentTasks = tasks.filter(t=>t.assignee===agentId||(t.assignees||[]).includes(agentId));
+    const taskCtx = agentTasks.length ? `\nYour current tasks: ${agentTasks.map(t=>`"${t.title}" [${t.status}]`).join(', ')}` : '';
+    return `${persona}${taskCtx}
+
+The platform assistant is consulting you privately. Answer this question directly and specifically in 2-4 sentences.
+Question: ${question}
+
+${RESPONSE_FORMAT}`;
+}
+
 module.exports = {
     AGENTS, TOKENS,
     MAX_TURNS_PER_ROUND, MAX_AGENT_RESPONSES, DUPLICATE_THRESHOLD,
@@ -472,5 +551,6 @@ module.exports = {
     buildUserTurnPrompt, buildCheckinPrompt, buildSpecialistPrompt,
     buildDirectMessagePrompt, buildSynthesisPrompt, buildTaskGenerationPrompt,
     buildDeliberationPrompt, buildVisionPrompt,
+    buildAssistantPrompt, buildAgentConsultPrompt,
     parseManagerResponse, parseTasksResponse, parseMentions, isDuplicate, fmtHistory,
 };

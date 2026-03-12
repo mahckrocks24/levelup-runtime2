@@ -308,6 +308,71 @@ app.post('/internal/workspace-memory', requireSecret, async (req, res) => {
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Global AI Assistant ───────────────────────────────────────────────────
+app.post('/internal/assistant', requireSecret, async (req, res) => {
+    const { message, context={}, history=[] } = req.body;
+    if (!message?.trim()) return res.status(400).json({ error:'message required' });
+
+    const { buildAssistantPrompt, buildAgentConsultPrompt, AGENTS, TOKENS } = require('./agents');
+    const { callLLM } = require('./llm');
+
+    try {
+        // Build conversation messages with history
+        const systemPrompt = buildAssistantPrompt(message, context);
+        const messages = [
+            { role:'system', content: systemPrompt },
+            ...history.slice(-10).map(h=>({ role: h.role, content: h.content })),
+            { role:'user', content: message },
+        ];
+
+        const r = await Promise.race([
+            callLLM({ messages, max_tokens: 500, temperature: 0.5 }),
+            new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 30000)),
+        ]);
+
+        const raw = (r.content||'').trim();
+
+        // Detect tool call
+        const toolMatch = raw.match(/<assistant_tool>\s*([\s\S]*?)\s*<\/assistant_tool>/i);
+        if (toolMatch) {
+            try {
+                const toolCall = JSON.parse(toolMatch[1].trim());
+
+                // Handle ask_agent server-side: consult the specialist
+                if (toolCall.tool === 'ask_agent' && toolCall.params?.agent) {
+                    const agentId  = toolCall.params.agent;
+                    const question = toolCall.params.question || message;
+                    const persona  = buildAgentConsultPrompt(agentId, question, context);
+                    const agentR   = await Promise.race([
+                        callLLM({ messages:[{role:'system',content:persona},{role:'user',content:'Answer now.'}], max_tokens: TOKENS.specialist, temperature:0.65 }),
+                        new Promise((_,rej)=>setTimeout(()=>rej(new Error('agent timeout')),30000)),
+                    ]);
+                    const agent = AGENTS[agentId]||{};
+                    return res.json({
+                        response: agentR.content?.trim()||'',
+                        agent_response: true,
+                        agent_id: agentId,
+                        agent_name: agent.name||agentId,
+                        agent_emoji: agent.emoji||'🤖',
+                        agent_color: agent.color||'#8B97B0',
+                    });
+                }
+
+                // All other tools: return tool_call for client execution
+                const textBefore = raw.replace(/<assistant_tool>[\s\S]*<\/assistant_tool>/i,'').trim();
+                return res.json({ response: textBefore||`I'll ${toolCall.tool.replace(/_/g,' ')} that for you.`, tool_call: toolCall });
+            } catch(e) {
+                // JSON parse failed — treat as plain response
+            }
+        }
+
+        res.json({ response: raw });
+    } catch(e) {
+        console.error('[ASSISTANT]', e.message);
+        res.status(500).json({ error: e.message, response:"I'm having a technical issue. Please try again." });
+    }
+});
+
 // ── 404 ────────────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error:'Not found', path:req.path }));
 
