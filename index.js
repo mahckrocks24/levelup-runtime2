@@ -2,222 +2,162 @@
 
 require('dotenv').config();
 
-const express    = require('express');
-const { Queue }  = require('bullmq');
-const { createRedisConnection }   = require('./redis');
+const express = require('express');
+const { createRedisConnection }    = require('./redis');
 const { assembleSystemPrompt, getToolDefinitionsForLLM } = require('./prompt-assembler');
-const { runAgentLoop }            = require('./llm');
+const { runAgentLoop }             = require('./llm');
 const { getHistory, appendMessage, formatForLLM } = require('./conversation');
-const { startMeeting, getMeeting } = require('./meeting-room');
-const registry                    = require('./registry');
-const { v4: uuidv4 }              = require('uuid');
+const { startMeeting, getMeeting, userMessage, wrapUpMeeting } = require('./meeting-room');
+const registry                     = require('./registry');
+const { v4: uuidv4 }               = require('uuid');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
-// ── Startup ────────────────────────────────────────────────────────────────
-console.log('[STARTUP] LevelUp Runtime Sprint C booting…');
-console.log('[STARTUP] REDIS_URL     :', process.env.REDIS_URL         ? 'SET ✓' : 'NOT SET ✗');
-console.log('[STARTUP] WP_SECRET     :', process.env.WP_SECRET         ? 'SET ✓' : 'NOT SET ✗');
-console.log('[STARTUP] DEEPSEEK_KEY  :', process.env.DEEPSEEK_API_KEY  ? 'SET ✓' : 'NOT SET ✗');
-console.log('[STARTUP] Tools         :', registry.list().map(t => t.name).join(', '));
+console.log('[STARTUP] LevelUp Runtime Sprint C v2 (Natural Conversation)');
+console.log('[STARTUP] REDIS_URL    :', process.env.REDIS_URL        ? 'SET ✓' : 'NOT SET ✗');
+console.log('[STARTUP] WP_SECRET    :', process.env.WP_SECRET        ? 'SET ✓' : 'NOT SET ✗');
+console.log('[STARTUP] DEEPSEEK_KEY :', process.env.DEEPSEEK_API_KEY ? 'SET ✓' : 'NOT SET ✗');
+console.log('[STARTUP] Tools        :', registry.list().map(t=>t.name).join(', '));
 
-// ── Queue ──────────────────────────────────────────────────────────────────
+// ── Auth ───────────────────────────────────────────────────────────────────
+function requireSecret(req, res, next) {
+    const secret = process.env.WP_SECRET;
+    if (!secret) return res.status(500).json({ error: 'WP_SECRET not set.' });
+    if (req.headers['x-levelup-secret'] !== secret) return res.status(401).json({ error: 'Unauthorized.' });
+    next();
+}
+
+// ── Queue (Sprint A) ───────────────────────────────────────────────────────
 let taskQueue = null;
 function getQueue() {
     if (taskQueue) return taskQueue;
-    if (!process.env.REDIS_URL) throw new Error('REDIS_URL is not set.');
+    const { Queue } = require('bullmq');
     taskQueue = new Queue('levelup-tasks', { connection: createRedisConnection() });
     return taskQueue;
 }
 
-// ── Auth ───────────────────────────────────────────────────────────────────
-function requireSecret(req, res, next) {
-    const incoming = req.headers['x-levelup-secret'];
-    const expected = process.env.WP_SECRET;
-    if (!expected) return res.status(500).json({ error: 'WP_SECRET not set.' });
-    if (!incoming || incoming !== expected) return res.status(401).json({ error: 'Unauthorized.' });
-    next();
-}
-
 // ── Health ─────────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'ok', service: 'levelup-runtime', version: '0.3.0', sprint: 'C',
-        time: new Date().toISOString(),
-        agents: ['sarah-dmm', 'aria', 'james', 'priya', 'marcus', 'elena', 'alex'],
-        tools:  registry.list().map(t => t.name),
-        config: {
-            redis: !!process.env.REDIS_URL,
-            llm:   !!process.env.DEEPSEEK_API_KEY,
-            wp:    !!process.env.WP_SECRET,
-        },
-    });
-});
+app.get('/health', (req, res) => res.json({
+    status:'ok', sprint:'C-v2', version:'0.3.1',
+    agents:Object.keys(require('./agents').AGENTS),
+    tools: registry.list().map(t=>t.name),
+    config:{ redis:!!process.env.REDIS_URL, llm:!!process.env.DEEPSEEK_API_KEY, wp:!!process.env.WP_SECRET },
+}));
 
 app.get('/internal/health', requireSecret, async (req, res) => {
     try {
-        const q = getQueue();
-        const counts = await q.getJobCounts();
-        res.json({ status: 'ok', redis: 'connected', queue: counts });
-    } catch (err) {
-        res.status(500).json({ status: 'error', message: err.message });
-    }
+        const counts = await getQueue().getJobCounts();
+        res.json({ status:'ok', redis:'connected', queue:counts });
+    } catch(e) { res.status(500).json({ status:'error', message:e.message }); }
 });
 
 // ── Sprint A: Enqueue ──────────────────────────────────────────────────────
 app.post('/internal/enqueue', requireSecret, async (req, res) => {
-    const body = req.body;
-    const required = ['task_id', 'tool_name', 'workspace_id', 'agent_id', 'callback_url'];
-    for (const field of required) {
-        if (!body[field]) return res.status(400).json({ error: `Missing: ${field}` });
+    const b = req.body;
+    for (const f of ['task_id','tool_name','workspace_id','agent_id','callback_url']) {
+        if (!b[f]) return res.status(400).json({ error:`Missing: ${f}` });
     }
     try {
-        const q   = getQueue();
-        const job = await q.add('execute-tool', {
-            ...body, payload: body.payload || {},
-            governance_tier: body.governance_tier ?? 0,
-            enqueued_at: new Date().toISOString(),
-        }, {
-            priority: body.priority || 5, attempts: 3,
-            backoff: { type: 'exponential', delay: 2000 },
-            removeOnComplete: { count: 100 }, removeOnFail: { count: 50 },
-        });
-        res.json({ accepted: true, task_id: body.task_id, job_id: job.id });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+        const job = await getQueue().add('execute-tool', { ...b, payload:b.payload||{}, governance_tier:b.governance_tier??0, enqueued_at:new Date().toISOString() },
+            { priority:b.priority||5, attempts:3, backoff:{type:'exponential',delay:2000}, removeOnComplete:{count:100}, removeOnFail:{count:50} });
+        res.json({ accepted:true, task_id:b.task_id, job_id:job.id });
+    } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
 // ── Sprint B: Chat ─────────────────────────────────────────────────────────
 app.post('/internal/chat', requireSecret, async (req, res) => {
-    const { conversation_id, workspace_id = 1, agent_id = 'dmm', message, workspace_context = {} } = req.body;
-    if (!message?.trim())    return res.status(400).json({ error: 'message is required.' });
-    if (!conversation_id)    return res.status(400).json({ error: 'conversation_id is required.' });
-
-    console.log(`[CHAT] agent=${agent_id} conv=${conversation_id}`);
+    const { conversation_id, workspace_id=1, agent_id='dmm', message, workspace_context={} } = req.body;
+    if (!message?.trim()) return res.status(400).json({ error:'message required.' });
+    if (!conversation_id)  return res.status(400).json({ error:'conversation_id required.' });
 
     try {
-        const history   = await getHistory(workspace_id, conversation_id);
-        const llmHistory = formatForLLM(history, 20);
+        const history     = await getHistory(workspace_id, conversation_id);
+        const llmHistory  = formatForLLM(history, 20);
         await appendMessage(workspace_id, conversation_id, 'user', message);
 
-        const availableToolNames = registry.list().map(t => t.name);
-        const systemPrompt = assembleSystemPrompt(agent_id, workspace_context, { availableTools: availableToolNames });
+        const systemPrompt = assembleSystemPrompt(agent_id, workspace_context,
+            { availableTools: registry.list().map(t=>t.name) });
 
-        const messages = [
-            { role: 'system', content: systemPrompt },
-            ...llmHistory,
-            { role: 'user', content: message },
-        ];
-
-        const allTools = registry.list();
-        const toolDefs = getToolDefinitionsForLLM(
-            allTools.map(t => ({ name: t.name, description: t.description, parameters: registry.get(t.name)?.parameters }))
-        );
-
-        const context = { task_id: `chat_${conversation_id}_${Date.now()}`, agent_id, workspace_id };
-        const result  = await runAgentLoop({ messages, toolDefs, toolRegistry: registry, context, maxRounds: 5 });
+        const messages = [{ role:'system', content:systemPrompt }, ...llmHistory, { role:'user', content:message }];
+        const toolDefs = getToolDefinitionsForLLM(registry.list().map(t=>({ name:t.name, description:t.description, parameters:registry.get(t.name)?.parameters })));
+        const result   = await runAgentLoop({ messages, toolDefs, toolRegistry:registry, context:{ task_id:`chat_${conversation_id}_${Date.now()}`, agent_id, workspace_id }, maxRounds:5 });
 
         await appendMessage(workspace_id, conversation_id, 'assistant', result.content);
-
-        res.json({
-            response:   result.content,
-            agent_id,
-            agent_name: agent_id === 'dmm' ? 'Sarah' : 'Aria',
-            tools_used: result.tools_used,
-            rounds:     result.rounds,
-            conversation_id,
-        });
-    } catch (err) {
-        console.error('[CHAT] Error:', err.message);
-        res.status(500).json({ error: err.message, response: "I'm having a technical issue right now. Please try again." });
+        res.json({ response:result.content, agent_id, agent_name:agent_id==='dmm'?'Sarah':'Aria', tools_used:result.tools_used, rounds:result.rounds, conversation_id });
+    } catch(e) {
+        res.status(500).json({ error:e.message, response:"I'm having a technical issue. Please try again." });
     }
 });
 
 // ── Sprint C: Meeting Room ─────────────────────────────────────────────────
 
-/**
- * POST /internal/meeting/start
- * Starts a new multi-agent meeting asynchronously.
- * Returns meeting_id immediately — meeting runs in background.
- *
- * Body: {
- *   type:         'campaign_planning' | 'strategy_review' | 'brainstorm',
- *   topic:        string,
- *   businessName: string,
- *   website:      string,
- *   goals:        string,
- * }
- */
+/** Start meeting */
 app.post('/internal/meeting/start', requireSecret, async (req, res) => {
-    const body = req.body;
-    if (!body.topic) return res.status(400).json({ error: 'topic is required.' });
+    const b = req.body;
+    if (!b.topic) return res.status(400).json({ error:'topic required.' });
 
-    const meetingId = 'mtg_' + uuidv4().replace(/-/g, '').substring(0, 16);
-
-    console.log(`[MEETING] Starting: ${meetingId} | topic="${body.topic}"`);
-
+    const meetingId = 'mtg_' + uuidv4().replace(/-/g,'').substring(0,16);
     try {
-        const meeting = await startMeeting(meetingId, {
-            type:         body.type         || 'brainstorm',
-            topic:        body.topic,
-            businessName: body.businessName || '',
-            website:      body.website      || '',
-            goals:        body.goals        || '',
-            industry:     body.industry     || '',
+        await startMeeting(meetingId, {
+            type:         b.type        || 'brainstorm',
+            topic:        b.topic,
+            businessName: b.businessName || '',
+            website:      b.website      || '',
+            goals:        b.goals        || '',
+            industry:     b.industry     || '',
         });
-
-        res.json({
-            meeting_id: meetingId,
-            status:     'starting',
-            topic:      body.topic,
-            type:       meeting.type,
-        });
-    } catch (err) {
-        console.error('[MEETING] Start error:', err.message);
-        res.status(500).json({ error: err.message });
-    }
+        res.json({ meeting_id:meetingId, status:'starting', topic:b.topic });
+    } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
-/**
- * GET /internal/meeting/:id/status
- * Polls meeting progress. Called every 2s by WordPress UI.
- * Returns current status + all responses received so far.
- */
+/** Poll meeting status */
 app.get('/internal/meeting/:id/status', requireSecret, async (req, res) => {
-    const meetingId = req.params.id;
-
     try {
-        const meeting = await getMeeting(meetingId);
-
-        if (!meeting) {
-            return res.status(404).json({ error: 'Meeting not found.', meeting_id: meetingId });
-        }
-
+        const m = await getMeeting(req.params.id);
+        if (!m) return res.status(404).json({ error:'Meeting not found.' });
         res.json({
-            meeting_id:   meetingId,
-            status:       meeting.status,
-            type:         meeting.type,
-            topic:        meeting.topic,
-            responses:    meeting.responses || [],
-            response_count: (meeting.responses || []).length,
-            completed_at: meeting.completed_at || null,
-            error:        meeting.error || null,
+            meeting_id:      m.id,
+            status:          m.status,
+            current_speaker: m.current_speaker || null,
+            topic:           m.topic,
+            type:            m.type,
+            phase:           m.phase || 'opening',
+            messages:        m.messages || [],
+            message_count:   (m.messages||[]).length,
+            completed_at:    m.completed_at || null,
+            error:           m.error || null,
         });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+/** User sends a message mid-meeting */
+app.post('/internal/meeting/:id/message', requireSecret, async (req, res) => {
+    const content = req.body.content?.trim();
+    if (!content) return res.status(400).json({ error:'content required.' });
+    try {
+        const result = await userMessage(req.params.id, content);
+        if (result.error) return res.status(400).json(result);
+        res.json(result);
+    } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+/** Wrap up meeting — user triggered */
+app.post('/internal/meeting/:id/wrap', requireSecret, async (req, res) => {
+    try {
+        const result = await wrapUpMeeting(req.params.id);
+        if (result.error) return res.status(400).json(result);
+        res.json(result);
+    } catch(e) { res.status(500).json({ error:e.message }); }
 });
 
 // ── 404 ────────────────────────────────────────────────────────────────────
-app.use((req, res) => res.status(404).json({ error: 'Not found', path: req.path }));
+app.use((req, res) => res.status(404).json({ error:'Not found', path:req.path }));
 
 // ── Start ──────────────────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] ✓ LevelUp Runtime Sprint C on port ${PORT}`);
-    if (!process.env.DEEPSEEK_API_KEY) console.warn('[SERVER] ⚠ DEEPSEEK_API_KEY not set');
+    console.log(`[SERVER] ✓ LevelUp Runtime Sprint C v2 on :${PORT}`);
     require('./worker');
 });
 
