@@ -1,10 +1,9 @@
 'use strict';
 
 /**
- * Task Worker — Sprint D
- * Triggered when a task moves to IN_PROGRESS.
- * Agent receives the task, deliberates, and produces a typed JSON deliverable
- * plus a human-readable summary. Both are stored in task memory.
+ * Task Worker — Sprint F: Tool-Aware Delivery
+ * When an agent delivers a task, they can now call real tools (SEO audit,
+ * keyword lookup, content draft, CRM write) to produce data-grounded output.
  */
 
 const { callLLM }         = require('./llm');
@@ -12,11 +11,14 @@ const taskMemory          = require('./task-memory');
 const workspaceMemory     = require('./workspace-memory');
 const { AGENTS, TOKENS }  = require('./agents');
 const { formatMemoryForPrompt } = require('./workspace-memory');
+const { parseToolCall, executeTool, formatToolResult } = require('./tool-executor');
+const { buildToolPromptBlock } = require('./tool-registry');
 
 // ── Per-agent delivery prompts ────────────────────────────────────────────
 function buildDeliveryPrompt(agentId, task, memory, schema) {
-    const a   = AGENTS[agentId];
-    const mem = formatMemoryForPrompt(memory);
+    const a        = AGENTS[agentId];
+    const mem      = formatMemoryForPrompt(memory);
+    const toolBlock = buildToolPromptBlock(agentId);
 
     const schemaGuide = {
         james: `Return a JSON object with these exact fields:
@@ -75,13 +77,18 @@ function buildDeliveryPrompt(agentId, task, memory, schema) {
     return `You are ${a.name}, ${a.title} at LevelUp Growth. You have been assigned a task and must now deliver.
 
 ${mem ? `WORKSPACE CONTEXT:\n${mem}\n` : ''}
-
+${toolBlock}
 YOUR ASSIGNED TASK:
 Title: ${task.title}
 Description: ${task.description}
 Success Metric: ${task.success_metric}
 Priority: ${task.priority}
 Meeting Context: ${task.meeting_id ? `From meeting ${task.meeting_id}` : 'Directly assigned'}
+
+DELIVERY INSTRUCTIONS:
+If a tool is available that gives you real data for this task, USE IT FIRST — output only the <tool_call> block.
+After the tool result is returned, produce your full deliverable using the real data.
+If no tool is needed, deliver directly.
 
 You must produce TWO things in a single JSON response:
 
@@ -95,10 +102,11 @@ Wrap everything in this outer structure:
   "deliverable": { ...your schema above... },
   "summary": "3-5 sentences plain English. Be specific — reference the task title, give your key finding, explain what the user should do with this deliverable.",
   "agent": "${agentId}",
-  "schema_type": "${taskMemory.getDeliverableSchema(agentId).type}"
+  "schema_type": "${taskMemory.getDeliverableSchema(agentId).type}",
+  "tool_used": "tool_id or null"
 }
 
-Be specific. Use real data patterns, realistic volume numbers, specific frameworks. No vague filler.
+Be specific. Use real data from tools where available. No vague filler.
 Return ONLY valid JSON. No markdown fences.`;
 }
 
@@ -127,17 +135,49 @@ async function triggerTaskDelivery(wsId, taskId) {
         const schema = taskMemory.getDeliverableSchema(agentId);
         const prompt = buildDeliveryPrompt(agentId, task, memory, schema);
 
-        const r = await Promise.race([
+        const deliveryMsg = { role: 'user', content: 'Deliver your output now. Use a tool first if you need real data.' };
+
+        // Step 1 — initial LLM call
+        let r = await Promise.race([
             callLLM({
-                messages: [
-                    { role: 'system', content: prompt },
-                    { role: 'user', content: 'Deliver your output now.' },
-                ],
+                messages: [{ role: 'system', content: prompt }, deliveryMsg],
                 max_tokens: TOKENS.specialist,
                 temperature: 0.5,
             }),
             new Promise((_,rej) => setTimeout(() => rej(new Error('delivery timeout')), 90000)),
         ]);
+
+        // Step 2 — tool call intercept
+        const toolCheck = parseToolCall(r.content || '');
+        if (toolCheck.hasToolCall) {
+            console.log(`[TASK-WORKER] ${agent.name} calling tool: ${toolCheck.tool}`);
+
+            // Post a note so the user can see the tool was used
+            await taskMemory.addNote(wsId, taskId, {
+                author:      agentId,
+                author_name: agent.name,
+                type:        'tool_call',
+                content:     `Using ${toolCheck.tool} to get real data for this task…`,
+            });
+
+            const toolResult = await executeTool(agentId, toolCheck.tool, toolCheck.params);
+            const toolBlock  = formatToolResult(toolCheck.tool, toolResult.result, toolResult.success ? null : toolResult.error);
+
+            // Step 3 — second LLM call with real tool data
+            r = await Promise.race([
+                callLLM({
+                    messages: [
+                        { role: 'system',    content: prompt },
+                        deliveryMsg,
+                        { role: 'assistant', content: r.content },
+                        { role: 'user',      content: `${toolBlock}\n\nNow produce your full JSON deliverable using this real data.` },
+                    ],
+                    max_tokens: TOKENS.specialist,
+                    temperature: 0.5,
+                }),
+                new Promise((_,rej) => setTimeout(() => rej(new Error('tool delivery timeout')), 90000)),
+            ]);
+        }
 
         // Parse response
         let parsed;

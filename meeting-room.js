@@ -6,6 +6,7 @@ const { createRedisConnection }    = require('./redis');
 const { callLLM }                  = require('./llm');
 const meetingStateLib              = require('./meeting-state');
 const workspaceMemory              = require('./workspace-memory');
+const { parseToolCall, executeTool, formatToolResult } = require('./tool-executor');
 const {
     AGENTS, TOKENS,
     MAX_TURNS_PER_ROUND, MAX_AGENT_RESPONSES, DUPLICATE_THRESHOLD,
@@ -93,7 +94,7 @@ async function callManager(prompt, mid) {
     }
 }
 
-// ── LLM: Specialist call (with deliberation) ──────────────────────────────
+// ── LLM: Specialist call (with deliberation + tool execution) ─────────────
 async function callSpecialist(agentId, ctx, history, task, mid, meetingState, memory) {
     const m = await getMeeting(mid);
     const agentResponses = (m?.messages || []).filter(x => x.agent_id === agentId).length;
@@ -109,22 +110,52 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
             // Step 1 — hidden deliberation
             const deliberation = await runDeliberation(agentId, history, task, meetingState);
 
-            // Step 2 — public response using deliberation as context
+            // Step 2 — build specialist prompt with tool defs
             const stateStr = meetingStateLib.formatStateForPrompt(meetingState);
             const memStr   = workspaceMemory.formatMemoryForPrompt(memory);
             const prompt   = buildSpecialistPrompt(agentId, ctx, history, task, stateStr, memStr, deliberation);
 
             const uMsg = attempt === 1
-                ? 'Give your expert response.'
+                ? 'Give your expert response. If you need real data, use a tool.'
                 : `Attempt ${attempt}: Your previous response was too similar to something already said. Give a genuinely NEW perspective — challenge an assumption, add new data, or take a different angle.`;
 
-            const r = await Promise.race([
+            // Step 3 — first LLM call (may return a tool_call)
+            let r = await Promise.race([
                 callLLM({ messages: [{ role: 'system', content: prompt }, { role: 'user', content: uMsg }], max_tokens: TOKENS.specialist, temperature: 0.65 + (attempt * 0.1) }),
                 new Promise((_,rej) => setTimeout(() => rej(new Error('specialist timeout')), 60000)),
             ]);
 
-            const content = r.content?.trim();
+            let content = r.content?.trim();
             if (!content) continue;
+
+            // Step 4 — tool call intercept (one tool per turn)
+            const toolCheck = parseToolCall(content);
+            if (toolCheck.hasToolCall) {
+                console.log(`[MTG:${mid}] ${agentId} calling tool: ${toolCheck.tool}`);
+
+                const toolResult = await executeTool(agentId, toolCheck.tool, toolCheck.params);
+                const toolBlock  = formatToolResult(toolCheck.tool, toolResult.result, toolResult.success ? null : toolResult.error);
+
+                // Step 5 — second LLM call with real tool data
+                const followUp = await Promise.race([
+                    callLLM({
+                        messages: [
+                            { role: 'system', content: prompt },
+                            { role: 'user',   content: uMsg },
+                            { role: 'assistant', content: content },
+                            { role: 'user',   content: `${toolBlock}\n\nNow give your expert response using this real data. Be specific about the numbers.` },
+                        ],
+                        max_tokens: TOKENS.specialist,
+                        temperature: 0.65,
+                    }),
+                    new Promise((_,rej) => setTimeout(() => rej(new Error('tool followup timeout')), 60000)),
+                ]);
+
+                content = followUp.content?.trim();
+                if (!content) continue;
+            }
+
+            // Duplicate check
             if (isDuplicate(content, m?.messages || [])) {
                 if (attempt === 3) return null;
                 continue;

@@ -1,15 +1,23 @@
 'use strict';
 
 /**
- * LevelUp Agent System — Intelligence Upgrade v2
- * - AGENT_DELIBERATION hidden reasoning step
- * - Debate orchestration (Sarah as Director, not narrator)
- * - Direct agent-to-agent addressing
- * - Meeting state awareness
- * - Workspace memory injection
- * - Vision analysis support
- * - 600 token specialists
- * - Loop safety
+ * LevelUp Agent System — Sprint F: Tool Registry Integration
+ * Agents can now call real tools (SEO audit, keywords, content, CRM).
+ * Tool definitions are injected into specialist prompts.
+ * Tool calls are detected and executed by tool-executor.js.
+ */
+
+// Lazy require to avoid circular deps — tool-registry doesn't import agents
+let _toolRegistry = null;
+function toolRegistry() {
+    if (!_toolRegistry) _toolRegistry = require('./tool-registry');
+    return _toolRegistry;
+}
+
+/**
+ * LevelUp Agent System — Sprint F
+ * Adds: real tool injection into specialist prompts + tool block parsers.
+ * Prior: deliberation, debate orchestration, meeting state, workspace memory, vision, loop safety.
  */
 
 const AGENTS = {
@@ -262,15 +270,18 @@ function buildSpecialistPrompt(agentId, ctx, history, task, meetingState, memory
     const deliBlock  = deliberation
         ? `\nYOUR INTERNAL REASONING (use this to shape your response, do not repeat it verbatim):\n${deliberation}\n`
         : '';
+    const toolBlock  = toolRegistry().buildToolPromptBlock(agentId);
 
     return `${persona}
 BUSINESS: ${ctx.businessName||'client'} (${ctx.website||''})
 TOPIC: "${ctx.topic}"
-${stateBlock}${memBlock}${deliBlock}
+${stateBlock}${memBlock}${deliBlock}${toolBlock}
 ${fmtHistory(history)}
 
 IMPORTANT: The USER IS IN THIS MEETING watching live. If the user spoke last, address them directly by saying "You" not "the user."
 If Sarah directed you, deliver — no hedging, no "I'll share this later."
+If you have a tool available that would give you REAL data for this task, use it — output only the <tool_call> block.
+Otherwise respond directly with your expert analysis.
 
 YOUR TASK: ${task}
 
