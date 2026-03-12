@@ -160,8 +160,21 @@ async function triggerTaskDelivery(wsId, taskId) {
                 content:     `Using ${toolCheck.tool} to get real data for this task…`,
             });
 
-            const toolResult = await executeTool(agentId, toolCheck.tool, toolCheck.params);
-            const toolBlock  = formatToolResult(toolCheck.tool, toolResult.result, toolResult.success ? null : toolResult.error);
+            const execResult = await executeTool(agentId, toolCheck.tool, toolCheck.params, taskId);
+            const toolBlock  = formatToolResult(toolCheck.tool, execResult);
+
+            // If the tool requires governance approval, note it and bail — task stays In Progress
+            // until the user approves and the agent can be re-triggered (future: auto-resume)
+            if (execResult.status === 'pending_approval') {
+                await taskMemory.addNote(wsId, taskId, {
+                    author:      agentId,
+                    author_name: agent.name,
+                    type:        'governance',
+                    content:     `Action queued for approval: ${execResult.preview}\nAction ID: ${execResult.action_id}`,
+                });
+                console.log(`[TASK-WORKER] Task ${taskId} paused — governance approval needed: ${execResult.action_id}`);
+                return; // task stays In Progress; will resume after approval
+            }
 
             // Step 3 — second LLM call with real tool data
             r = await Promise.race([

@@ -373,6 +373,46 @@ app.post('/internal/assistant', requireSecret, async (req, res) => {
     }
 });
 
+// ── Governance endpoints ───────────────────────────────────────────────────
+const { getPendingActions, approveAction, rejectAction } = require('./tool-executor');
+
+// GET /internal/governance/pending — list all pending tool approval actions
+app.get('/internal/governance/pending', requireSecret, async (req, res) => {
+    try {
+        const actions = await getPendingActions();
+        res.json({ success: true, pending: actions, count: actions.length });
+    } catch (e) {
+        console.error('[GOVERNANCE]', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// POST /internal/governance/approve — approve and execute a pending action
+app.post('/internal/governance/approve', requireSecret, async (req, res) => {
+    const { action_id } = req.body;
+    if (!action_id) return res.status(400).json({ success: false, error: 'action_id required.' });
+    try {
+        const result = await approveAction(action_id);
+        res.json(result);
+    } catch (e) {
+        console.error('[GOVERNANCE]', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// POST /internal/governance/reject — reject a pending action
+app.post('/internal/governance/reject', requireSecret, async (req, res) => {
+    const { action_id } = req.body;
+    if (!action_id) return res.status(400).json({ success: false, error: 'action_id required.' });
+    try {
+        const result = await rejectAction(action_id);
+        res.json(result);
+    } catch (e) {
+        console.error('[GOVERNANCE]', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // ── 404 ────────────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error:'Not found', path:req.path }));
 

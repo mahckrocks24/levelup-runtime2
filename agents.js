@@ -7,11 +7,16 @@
  * Tool calls are detected and executed by tool-executor.js.
  */
 
-// Lazy require to avoid circular deps — tool-registry doesn't import agents
+// Lazy require to avoid circular deps
 let _toolRegistry = null;
 function toolRegistry() {
     if (!_toolRegistry) _toolRegistry = require('./tool-registry');
     return _toolRegistry;
+}
+let _toolExecutor = null;
+function toolExecutor() {
+    if (!_toolExecutor) _toolExecutor = require('./tool-executor');
+    return _toolExecutor;
 }
 
 /**

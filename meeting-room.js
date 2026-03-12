@@ -133,8 +133,14 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
             if (toolCheck.hasToolCall) {
                 console.log(`[MTG:${mid}] ${agentId} calling tool: ${toolCheck.tool}`);
 
-                const toolResult = await executeTool(agentId, toolCheck.tool, toolCheck.params);
-                const toolBlock  = formatToolResult(toolCheck.tool, toolResult.result, toolResult.success ? null : toolResult.error);
+                const execResult = await executeTool(agentId, toolCheck.tool, toolCheck.params);
+                const toolBlock  = formatToolResult(toolCheck.tool, execResult);
+
+                // If action requires approval, emit a governance notification to the meeting feed
+                // and let the agent produce a natural response acknowledging it
+                const followUpPrompt = execResult.status === 'pending_approval'
+                    ? `${toolBlock}\n\nThe action requires human approval before it executes. Inform the team that you've proposed this action and it's awaiting approval. Continue your expert analysis.`
+                    : `${toolBlock}\n\nNow give your expert response using this real data. Be specific about the numbers.`;
 
                 // Step 5 — second LLM call with real tool data
                 const followUp = await Promise.race([
@@ -143,7 +149,7 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
                             { role: 'system', content: prompt },
                             { role: 'user',   content: uMsg },
                             { role: 'assistant', content: content },
-                            { role: 'user',   content: `${toolBlock}\n\nNow give your expert response using this real data. Be specific about the numbers.` },
+                            { role: 'user',   content: followUpPrompt },
                         ],
                         max_tokens: TOKENS.specialist,
                         temperature: 0.65,
@@ -153,6 +159,17 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
 
                 content = followUp.content?.trim();
                 if (!content) continue;
+
+                // Attach governance metadata to the message if pending approval
+                if (execResult.status === 'pending_approval') {
+                    content = `__GOVERNANCE_ACTION__${JSON.stringify({
+                        action_id: execResult.action_id,
+                        tool_id:   execResult.tool_id,
+                        tool_name: execResult.tool_name,
+                        preview:   execResult.preview,
+                        agent_id:  agentId,
+                    })}__END_GOVERNANCE__\n${content}`;
+                }
             }
 
             // Duplicate check
