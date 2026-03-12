@@ -315,12 +315,573 @@ const SEO_TOOLS = {
 };
 
 // ══════════════════════════════════════════════════════════════════════════
-// FUTURE DOMAINS — Phase 3+ stubs (no tools yet, structure ready)
+// CRM DOMAIN — 8 tools (lucrm/v1/*)
 // ══════════════════════════════════════════════════════════════════════════
-const CRM_TOOLS        = {}; // Phase 3
-const MARKETING_TOOLS  = {}; // Phase 3
-const SOCIAL_TOOLS     = {}; // Phase 3
-const CALENDAR_TOOLS   = {}; // Phase 3
+const CRM_TOOLS = {
+
+    create_lead: {
+        id:               'create_lead',
+        domain:           'crm',
+        name:             'Create Lead',
+        description:      'Create a new lead in the CRM. Sets name, email, phone, company, source, and optionally assigns to a pipeline stage and agent.',
+        wp_path:          '/lucrm/v1/leads',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['name', 'email', 'phone', 'company', 'source', 'pipeline_stage_id', 'assigned_agent', 'score'],
+        query_params:     [],
+        params: {
+            name:              { type: 'string',  required: true,  description: 'Full name of the lead' },
+            email:             { type: 'string',  required: false, description: 'Email address' },
+            phone:             { type: 'string',  required: false, description: 'Phone number' },
+            company:           { type: 'string',  required: false, description: 'Company name' },
+            source:            { type: 'string',  required: false, description: 'Lead source (e.g. website, referral, social)' },
+            pipeline_stage_id: { type: 'integer', required: false, description: 'Pipeline stage ID to place lead in' },
+            assigned_agent:    { type: 'string',  required: false, description: 'Agent slug to assign lead to (e.g. elena)' },
+            score:             { type: 'integer', required: false, description: 'Lead score 0-100' },
+        },
+        returns:          '{ success, lead }',
+        requires_approval: true,
+        approval_preview: 'Create a new CRM lead: "{name}" ({email}). Adds to the pipeline.',
+        allowed_agents:   ['elena', 'dmm'],
+    },
+
+    get_lead: {
+        id:               'get_lead',
+        domain:           'crm',
+        name:             'Get Lead',
+        description:      'Retrieve full details for a lead including recent activities and notes.',
+        wp_path:          '/lucrm/v1/leads/:id',
+        method:           'GET',
+        url_params:       ['id'],
+        body_params:      [],
+        query_params:     [],
+        params: {
+            id: { type: 'integer', required: true, description: 'Lead ID to retrieve' },
+        },
+        returns:          'lead object with activities[] and notes[]',
+        requires_approval: false,
+        allowed_agents:   ['elena', 'dmm', 'james'],
+    },
+
+    update_lead: {
+        id:               'update_lead',
+        domain:           'crm',
+        name:             'Update Lead',
+        description:      'Update fields on an existing lead. Only provided fields are changed.',
+        wp_path:          '/lucrm/v1/leads/:id',
+        method:           'PUT',
+        url_params:       ['id'],
+        body_params:      ['name', 'email', 'phone', 'company', 'status', 'assigned_agent', 'score'],
+        query_params:     [],
+        params: {
+            id:             { type: 'integer', required: true,  description: 'Lead ID to update' },
+            name:           { type: 'string',  required: false, description: 'Updated name' },
+            email:          { type: 'string',  required: false, description: 'Updated email' },
+            status:         { type: 'string',  required: false, description: 'active | archived | lost' },
+            assigned_agent: { type: 'string',  required: false, description: 'Reassign to agent slug' },
+            score:          { type: 'integer', required: false, description: 'Updated lead score' },
+        },
+        returns:          '{ success }',
+        requires_approval: false,
+        allowed_agents:   ['elena', 'dmm'],
+    },
+
+    list_leads: {
+        id:               'list_leads',
+        domain:           'crm',
+        name:             'List Leads',
+        description:      'List leads with optional filters by status, pipeline stage, assigned agent, or search term.',
+        wp_path:          '/lucrm/v1/leads',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     ['status', 'stage', 'agent', 'search', 'limit', 'offset'],
+        params: {
+            status: { type: 'string',  required: false, description: 'Filter by status: active | archived | lost' },
+            stage:  { type: 'integer', required: false, description: 'Filter by pipeline stage ID' },
+            agent:  { type: 'string',  required: false, description: 'Filter by assigned agent slug' },
+            search: { type: 'string',  required: false, description: 'Search name, email, or company' },
+            limit:  { type: 'integer', required: false, description: 'Max results (default 50, max 200)' },
+            offset: { type: 'integer', required: false, description: 'Pagination offset' },
+        },
+        returns:          '{ leads[], total, limit, offset }',
+        requires_approval: false,
+        allowed_agents:   ['elena', 'dmm', 'james'],
+    },
+
+    move_lead: {
+        id:               'move_lead',
+        domain:           'crm',
+        name:             'Move Lead to Stage',
+        description:      'Move a lead to a different pipeline stage. Automatically logs an activity.',
+        wp_path:          '/lucrm/v1/leads/:id/move',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      ['stage_id'],
+        query_params:     [],
+        params: {
+            id:       { type: 'integer', required: true, description: 'Lead ID to move' },
+            stage_id: { type: 'integer', required: true, description: 'Target pipeline stage ID' },
+        },
+        returns:          '{ success }',
+        requires_approval: false,
+        allowed_agents:   ['elena', 'dmm'],
+    },
+
+    log_activity: {
+        id:               'log_activity',
+        domain:           'crm',
+        name:             'Log Activity',
+        description:      'Log an activity against a lead (call, email, meeting, or note).',
+        wp_path:          '/lucrm/v1/leads/:id/activities',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      ['type', 'description', 'created_by'],
+        query_params:     [],
+        params: {
+            id:          { type: 'integer', required: true,  description: 'Lead ID to log activity for' },
+            type:        { type: 'string',  required: true,  description: 'call | email | meeting | note' },
+            description: { type: 'string',  required: true,  description: 'Activity description' },
+            created_by:  { type: 'string',  required: false, description: 'Agent slug who performed this activity' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: false,
+        allowed_agents:   ['elena', 'dmm'],
+    },
+
+    add_note: {
+        id:               'add_note',
+        domain:           'crm',
+        name:             'Add Note to Lead',
+        description:      'Add a structured note to a lead record.',
+        wp_path:          '/lucrm/v1/leads/:id/notes',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      ['note', 'created_by'],
+        query_params:     [],
+        params: {
+            id:         { type: 'integer', required: true,  description: 'Lead ID to add note to' },
+            note:       { type: 'string',  required: true,  description: 'Note content' },
+            created_by: { type: 'string',  required: false, description: 'Agent slug authoring the note' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: false,
+        allowed_agents:   ['elena', 'dmm'],
+    },
+
+    enroll_sequence: {
+        id:               'enroll_sequence',
+        domain:           'crm',
+        name:             'Enroll Lead in Sequence',
+        description:      'Enroll a lead in an email sequence. The sequence must already exist. Prevents duplicate active enrollments.',
+        wp_path:          '/lucrm/v1/sequences/:id/enroll',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      ['lead_id'],
+        query_params:     [],
+        params: {
+            id:      { type: 'integer', required: true, description: 'Sequence ID to enroll the lead in' },
+            lead_id: { type: 'integer', required: true, description: 'Lead ID to enroll' },
+        },
+        returns:          '{ success, enrollment_id }',
+        requires_approval: true,
+        approval_preview: 'Enroll lead #{lead_id} in email sequence #{id}. Will begin automated email steps.',
+        allowed_agents:   ['elena', 'dmm'],
+    },
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+// MARKETING DOMAIN — 7 tools (lumkt/v1/*)
+// ══════════════════════════════════════════════════════════════════════════
+const MARKETING_TOOLS = {
+
+    create_campaign: {
+        id:               'create_campaign',
+        domain:           'marketing',
+        name:             'Create Campaign',
+        description:      'Create a new marketing campaign. Types: email, social, content, ads.',
+        wp_path:          '/lumkt/v1/campaigns',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['name', 'type', 'status', 'target_audience', 'start_date', 'end_date'],
+        query_params:     [],
+        params: {
+            name:            { type: 'string', required: true,  description: 'Campaign name' },
+            type:            { type: 'string', required: false, description: 'email | social | content | ads' },
+            status:          { type: 'string', required: false, description: 'draft | active | paused | completed' },
+            target_audience: { type: 'string', required: false, description: 'Description of target audience' },
+            start_date:      { type: 'string', required: false, description: 'Start date YYYY-MM-DD' },
+            end_date:        { type: 'string', required: false, description: 'End date YYYY-MM-DD' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: true,
+        approval_preview: 'Create a new {type} campaign: "{name}". Status: {status}.',
+        allowed_agents:   ['priya', 'dmm'],
+    },
+
+    update_campaign: {
+        id:               'update_campaign',
+        domain:           'marketing',
+        name:             'Update Campaign',
+        description:      'Update an existing campaign. Only provided fields are changed.',
+        wp_path:          '/lumkt/v1/campaigns/:id',
+        method:           'PUT',
+        url_params:       ['id'],
+        body_params:      ['name', 'status', 'target_audience', 'start_date', 'end_date'],
+        query_params:     [],
+        params: {
+            id:     { type: 'integer', required: true,  description: 'Campaign ID to update' },
+            name:   { type: 'string',  required: false, description: 'Updated name' },
+            status: { type: 'string',  required: false, description: 'draft | active | paused | completed | archived' },
+        },
+        returns:          '{ success }',
+        requires_approval: false,
+        allowed_agents:   ['priya', 'dmm'],
+    },
+
+    list_campaigns: {
+        id:               'list_campaigns',
+        domain:           'marketing',
+        name:             'List Campaigns',
+        description:      'List all campaigns, optionally filtered by type or status.',
+        wp_path:          '/lumkt/v1/campaigns',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     ['type', 'status'],
+        params: {
+            type:   { type: 'string', required: false, description: 'Filter by type: email | social | content | ads' },
+            status: { type: 'string', required: false, description: 'Filter by status' },
+        },
+        returns:          'campaign[]',
+        requires_approval: false,
+        allowed_agents:   ['priya', 'dmm', 'james', 'marcus', 'elena'],
+    },
+
+    create_template: {
+        id:               'create_template',
+        domain:           'marketing',
+        name:             'Create Email Template',
+        description:      'Create a reusable email template with subject, HTML body, and variable placeholders (e.g. {{lead_name}}).',
+        wp_path:          '/lumkt/v1/templates',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['name', 'subject', 'body', 'variables'],
+        query_params:     [],
+        params: {
+            name:      { type: 'string', required: true,  description: 'Template name' },
+            subject:   { type: 'string', required: true,  description: 'Email subject line' },
+            body:      { type: 'string', required: true,  description: 'HTML email body' },
+            variables: { type: 'array',  required: false, description: 'Variable names used in template e.g. ["lead_name","company"]' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: false,
+        allowed_agents:   ['priya', 'dmm'],
+    },
+
+    list_templates: {
+        id:               'list_templates',
+        domain:           'marketing',
+        name:             'List Email Templates',
+        description:      'List all email templates for the workspace.',
+        wp_path:          '/lumkt/v1/templates',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     [],
+        params:           {},
+        returns:          'template[] (id, name, subject, variables_json, created_at — no body for performance)',
+        requires_approval: false,
+        allowed_agents:   ['priya', 'dmm', 'elena'],
+    },
+
+    create_automation: {
+        id:               'create_automation',
+        domain:           'marketing',
+        name:             'Create Automation Sequence',
+        description:      'Create a new automation workflow sequence with a trigger type.',
+        wp_path:          '/lumkt/v1/sequences',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['name', 'trigger_type'],
+        query_params:     [],
+        params: {
+            name:         { type: 'string', required: true,  description: 'Sequence name' },
+            trigger_type: { type: 'string', required: false, description: 'What triggers this sequence (e.g. lead_created, form_submit)' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: true,
+        approval_preview: 'Create automation sequence "{name}" triggered by "{trigger_type}".',
+        allowed_agents:   ['priya', 'dmm'],
+    },
+
+    record_metric: {
+        id:               'record_metric',
+        domain:           'marketing',
+        name:             'Record Campaign Metric',
+        description:      'Record a metric data point for a campaign. Metrics: opens, clicks, conversions, unsubscribes.',
+        wp_path:          '/lumkt/v1/campaigns/:id/analytics',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      ['metric_type', 'metric_value'],
+        query_params:     [],
+        params: {
+            id:           { type: 'integer', required: true,  description: 'Campaign ID' },
+            metric_type:  { type: 'string',  required: true,  description: 'opens | clicks | conversions | unsubscribes' },
+            metric_value: { type: 'number',  required: false, description: 'Numeric value (default 1)' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: false,
+        allowed_agents:   ['priya', 'dmm', 'james'],
+    },
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+// SOCIAL DOMAIN — 6 tools (lusocial/v1/*)
+// ══════════════════════════════════════════════════════════════════════════
+const SOCIAL_TOOLS = {
+
+    create_post: {
+        id:               'create_post',
+        domain:           'social',
+        name:             'Create Social Post',
+        description:      'Create a social media post as a draft. Platform can be any string: linkedin, facebook, instagram, x, tiktok, google_business, or custom.',
+        wp_path:          '/lusocial/v1/posts',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['content', 'platform', 'media_url', 'scheduled_at', 'status'],
+        query_params:     [],
+        params: {
+            content:      { type: 'string', required: true,  description: 'Post copy/content' },
+            platform:     { type: 'string', required: true,  description: 'Target platform: linkedin | facebook | instagram | x | tiktok | google_business' },
+            media_url:    { type: 'string', required: false, description: 'Media attachment URL' },
+            scheduled_at: { type: 'string', required: false, description: 'Schedule datetime (ISO 8601). Leave empty for draft.' },
+            status:       { type: 'string', required: false, description: 'draft | scheduled | published. Default: draft' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: false,
+        allowed_agents:   ['marcus', 'dmm', 'priya'],
+    },
+
+    schedule_post: {
+        id:               'schedule_post',
+        domain:           'social',
+        name:             'Schedule Social Post',
+        description:      'Update a draft post to scheduled status with a specific publish datetime.',
+        wp_path:          '/lusocial/v1/posts/:id',
+        method:           'PUT',
+        url_params:       ['id'],
+        body_params:      ['scheduled_at', 'status'],
+        query_params:     [],
+        params: {
+            id:           { type: 'integer', required: true,  description: 'Post ID to schedule' },
+            scheduled_at: { type: 'string',  required: true,  description: 'Publish datetime ISO 8601' },
+        },
+        returns:          '{ success }',
+        requires_approval: true,
+        approval_preview: 'Schedule post #{id} to publish at {scheduled_at} on the connected platform.',
+        allowed_agents:   ['marcus', 'dmm'],
+    },
+
+    list_posts: {
+        id:               'list_posts',
+        domain:           'social',
+        name:             'List Social Posts',
+        description:      'List social posts with optional filters by platform or status.',
+        wp_path:          '/lusocial/v1/posts',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     ['platform', 'status', 'limit', 'offset'],
+        params: {
+            platform: { type: 'string',  required: false, description: 'Filter by platform' },
+            status:   { type: 'string',  required: false, description: 'Filter by status: draft | scheduled | published | failed' },
+            limit:    { type: 'integer', required: false, description: 'Max results (default 50)' },
+            offset:   { type: 'integer', required: false, description: 'Pagination offset' },
+        },
+        returns:          '{ posts[], total, limit, offset }',
+        requires_approval: false,
+        allowed_agents:   ['marcus', 'dmm', 'priya', 'james'],
+    },
+
+    update_post: {
+        id:               'update_post',
+        domain:           'social',
+        name:             'Update Social Post',
+        description:      'Edit content, platform, media, or status of an existing post.',
+        wp_path:          '/lusocial/v1/posts/:id',
+        method:           'PUT',
+        url_params:       ['id'],
+        body_params:      ['content', 'platform', 'media_url', 'status'],
+        query_params:     [],
+        params: {
+            id:       { type: 'integer', required: true,  description: 'Post ID to update' },
+            content:  { type: 'string',  required: false, description: 'Updated post copy' },
+            platform: { type: 'string',  required: false, description: 'Updated platform' },
+            status:   { type: 'string',  required: false, description: 'Updated status' },
+        },
+        returns:          '{ success }',
+        requires_approval: false,
+        allowed_agents:   ['marcus', 'dmm', 'priya'],
+    },
+
+    get_queue: {
+        id:               'get_queue',
+        domain:           'social',
+        name:             'Get Scheduled Queue',
+        description:      'Get all scheduled posts queued for publishing. Optionally filter by an until datetime.',
+        wp_path:          '/lusocial/v1/queue',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     ['until'],
+        params: {
+            until: { type: 'string', required: false, description: 'Show queue until this datetime (ISO 8601). Defaults to next 7 days.' },
+        },
+        returns:          '{ queue[], count, until }',
+        requires_approval: false,
+        allowed_agents:   ['marcus', 'dmm', 'james'],
+    },
+
+    record_social_analytics: {
+        id:               'record_social_analytics',
+        domain:           'social',
+        name:             'Record Social Analytics',
+        description:      'Record engagement metrics for a published post: reach, impressions, likes, comments, shares.',
+        wp_path:          '/lusocial/v1/posts/:id/analytics',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      ['platform', 'reach', 'impressions', 'engagement', 'likes', 'comments', 'shares'],
+        query_params:     [],
+        params: {
+            id:          { type: 'integer', required: true,  description: 'Post ID to record analytics for' },
+            platform:    { type: 'string',  required: false, description: 'Platform these metrics are from' },
+            reach:       { type: 'integer', required: false, description: 'Unique accounts reached' },
+            impressions: { type: 'integer', required: false, description: 'Total impressions' },
+            likes:       { type: 'integer', required: false, description: 'Likes/reactions' },
+            comments:    { type: 'integer', required: false, description: 'Comment count' },
+            shares:      { type: 'integer', required: false, description: 'Share/repost count' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: false,
+        allowed_agents:   ['marcus', 'dmm'],
+    },
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+// CALENDAR DOMAIN — 5 tools (lucal/v1/*)
+// ══════════════════════════════════════════════════════════════════════════
+const CALENDAR_TOOLS = {
+
+    create_event: {
+        id:               'create_event',
+        domain:           'calendar',
+        name:             'Create Event',
+        description:      'Create a calendar event. Types: meeting, task, call, booking. Can be linked to a CRM lead.',
+        wp_path:          '/lucal/v1/events',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['title', 'type', 'start_time', 'end_time', 'assigned_to', 'linked_lead_id'],
+        query_params:     [],
+        params: {
+            title:          { type: 'string',  required: true,  description: 'Event title' },
+            type:           { type: 'string',  required: false, description: 'meeting | task | call | booking. Default: meeting' },
+            start_time:     { type: 'string',  required: true,  description: 'Start datetime (YYYY-MM-DD HH:MM:SS)' },
+            end_time:       { type: 'string',  required: true,  description: 'End datetime (YYYY-MM-DD HH:MM:SS)' },
+            assigned_to:    { type: 'string',  required: false, description: 'Agent slug or person name' },
+            linked_lead_id: { type: 'integer', required: false, description: 'CRM lead ID to associate this event with' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: true,
+        approval_preview: 'Create a {type} event: "{title}" on {start_time}.',
+        allowed_agents:   ['dmm', 'elena', 'james', 'priya', 'marcus', 'alex'],
+    },
+
+    list_events: {
+        id:               'list_events',
+        domain:           'calendar',
+        name:             'List Events',
+        description:      'List calendar events, optionally filtered by date range, type, or assigned agent.',
+        wp_path:          '/lucal/v1/events',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     ['from', 'to', 'type', 'assigned_to'],
+        params: {
+            from:        { type: 'string', required: false, description: 'Filter events from this datetime' },
+            to:          { type: 'string', required: false, description: 'Filter events until this datetime' },
+            type:        { type: 'string', required: false, description: 'Filter by type: meeting | task | call | booking' },
+            assigned_to: { type: 'string', required: false, description: 'Filter by assigned agent/person' },
+        },
+        returns:          'event[]',
+        requires_approval: false,
+        allowed_agents:   ['dmm', 'elena', 'james', 'priya', 'marcus', 'alex'],
+    },
+
+    update_event: {
+        id:               'update_event',
+        domain:           'calendar',
+        name:             'Update Event',
+        description:      'Update an existing calendar event. Only provided fields are changed.',
+        wp_path:          '/lucal/v1/events/:id',
+        method:           'PUT',
+        url_params:       ['id'],
+        body_params:      ['title', 'event_type', 'start_time', 'end_time', 'assigned_to'],
+        query_params:     [],
+        params: {
+            id:         { type: 'integer', required: true,  description: 'Event ID to update' },
+            title:      { type: 'string',  required: false, description: 'Updated title' },
+            start_time: { type: 'string',  required: false, description: 'Updated start datetime' },
+            end_time:   { type: 'string',  required: false, description: 'Updated end datetime' },
+        },
+        returns:          '{ success }',
+        requires_approval: false,
+        allowed_agents:   ['dmm', 'elena', 'james', 'priya', 'marcus', 'alex'],
+    },
+
+    check_availability: {
+        id:               'check_availability',
+        domain:           'calendar',
+        name:             'Check Availability',
+        description:      'Check working hours, blackout dates, existing events, and available booking slots for a given date.',
+        wp_path:          '/lucal/v1/availability',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     ['date'],
+        params: {
+            date: { type: 'string', required: false, description: 'Date to check (YYYY-MM-DD). Defaults to today.' },
+        },
+        returns:          '{ date, is_working_day, is_blackout, working_hours, events[], available_slots[] }',
+        requires_approval: false,
+        allowed_agents:   ['dmm', 'elena', 'james', 'priya', 'marcus', 'alex'],
+    },
+
+    create_booking_slot: {
+        id:               'create_booking_slot',
+        domain:           'calendar',
+        name:             'Create Booking Slot',
+        description:      'Create a client-facing booking slot for a specific time window.',
+        wp_path:          '/lucal/v1/booking-slots',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['start_time', 'end_time', 'status'],
+        query_params:     [],
+        params: {
+            start_time: { type: 'string', required: true,  description: 'Slot start datetime' },
+            end_time:   { type: 'string', required: true,  description: 'Slot end datetime' },
+            status:     { type: 'string', required: false, description: 'available | booked | blocked. Default: available' },
+        },
+        returns:          '{ success, id }',
+        requires_approval: true,
+        approval_preview: 'Create a booking slot from {start_time} to {end_time}.',
+        allowed_agents:   ['dmm', 'elena'],
+    },
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+// FUTURE DOMAINS — Phase 4+ stubs
+// ══════════════════════════════════════════════════════════════════════════
 const BUILDER_TOOLS    = {}; // Phase 4
 const GOVERNANCE_TOOLS = {}; // Phase 4
 

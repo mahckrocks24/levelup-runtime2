@@ -21,67 +21,82 @@
 const CAPABILITY_MAP = {
 
     // Sarah — DMM Director
-    // Manages autonomous goals and high-level orchestration
+    // Full cross-domain access — orchestrates all agents and engines
     dmm: [
-        'autonomous_goal',   // Submit background goals to the SEO agent
-        'list_goals',        // Review all active goals
-        'agent_status',      // Check progress on a specific goal
-        'pause_goal',        // Pause a running goal
-        'ai_status',         // Check if AI is ready before delegating
+        // SEO
+        'autonomous_goal', 'list_goals', 'agent_status', 'pause_goal', 'ai_status',
+        // CRM
+        'create_lead', 'get_lead', 'update_lead', 'list_leads', 'move_lead', 'log_activity', 'add_note', 'enroll_sequence',
+        // Marketing
+        'create_campaign', 'update_campaign', 'list_campaigns', 'create_template', 'list_templates', 'create_automation', 'record_metric',
+        // Social
+        'create_post', 'schedule_post', 'list_posts', 'update_post', 'get_queue', 'record_social_analytics',
+        // Calendar
+        'create_event', 'list_events', 'update_event', 'check_availability', 'create_booking_slot',
     ],
 
     // James — SEO Specialist
-    // Handles research, analysis, and reporting
+    // SEO research + read access to campaigns and pipeline for context
     james: [
-        'serp_analysis',     // Live SERP competitor data
-        'ai_report',         // Full AI content intelligence report
-        'deep_audit',        // Deep per-post SEO audit
-        'ai_status',         // Check AI readiness
-        'list_goals',        // View active autonomous goals
-        'agent_status',      // Monitor goal progress
-        'pause_goal',        // Pause a goal if needed
+        // SEO
+        'serp_analysis', 'ai_report', 'deep_audit', 'ai_status', 'list_goals', 'agent_status', 'pause_goal',
+        // CRM — read only
+        'get_lead', 'list_leads',
+        // Marketing — read only
+        'list_campaigns', 'record_metric',
+        // Social — read only
+        'list_posts', 'get_queue',
+        // Calendar
+        'list_events', 'check_availability', 'create_event', 'update_event',
     ],
 
     // Priya — Content Specialist
-    // Handles content creation and improvement
+    // Content creation across SEO + social + campaigns
     priya: [
-        'write_article',     // Generate full SEO article as WP draft
-        'improve_draft',     // AI-improve an existing post
-        'ai_report',         // Use AI report to inform content
-        'ai_status',         // Check AI readiness
-        'list_goals',        // View active goals
-        'agent_status',      // Monitor goal progress
+        // SEO
+        'write_article', 'improve_draft', 'ai_report', 'ai_status', 'list_goals', 'agent_status',
+        // Marketing
+        'create_campaign', 'update_campaign', 'list_campaigns', 'create_template', 'list_templates', 'create_automation',
+        // Social
+        'create_post', 'update_post', 'list_posts',
+        // Calendar
+        'list_events', 'check_availability', 'create_event', 'update_event',
     ],
 
     // Marcus — Social Media Specialist
-    // No tools yet — Phase 3 will add social publishing tools
+    // Full social domain + campaign visibility + calendar
     marcus: [
-        'ai_status',         // Check AI readiness (general utility)
-        'list_goals',        // View active goals
-        'agent_status',      // Monitor goal progress
+        // SEO — utility only
+        'ai_status', 'list_goals', 'agent_status',
+        // Marketing — read only
+        'list_campaigns',
+        // Social — full access
+        'create_post', 'schedule_post', 'list_posts', 'update_post', 'get_queue', 'record_social_analytics',
+        // Calendar
+        'list_events', 'check_availability', 'create_event', 'update_event',
     ],
 
     // Elena — CRM Specialist
-    // No tools yet — Phase 3 will add CRM tools
+    // Full CRM domain + calendar + campaign visibility
     elena: [
-        'ai_status',         // Check AI readiness (general utility)
-        'list_goals',        // View active goals
-        'agent_status',      // Monitor goal progress
+        // SEO — utility only
+        'ai_status', 'list_goals', 'agent_status',
+        // CRM — full access
+        'create_lead', 'get_lead', 'update_lead', 'list_leads', 'move_lead', 'log_activity', 'add_note', 'enroll_sequence',
+        // Marketing — template and campaign read
+        'list_campaigns', 'list_templates',
+        // Calendar — full access
+        'create_event', 'list_events', 'update_event', 'check_availability', 'create_booking_slot',
     ],
 
     // Alex — Technical SEO Specialist
-    // Handles link management and technical audits
+    // Deep technical SEO + calendar
     alex: [
-        'deep_audit',        // Deep per-post technical audit
-        'link_suggestions',  // Get internal link suggestions
-        'insert_link',       // Insert a suggested link into content
-        'dismiss_link',      // Dismiss a link suggestion
-        'outbound_links',    // View outbound links for a post
-        'check_outbound',    // Live health scan of outbound links
-        'ai_status',         // Check AI readiness
-        'list_goals',        // View active goals
-        'agent_status',      // Monitor goal progress
-        'pause_goal',        // Pause a goal if needed
+        // SEO — full technical access
+        'deep_audit', 'link_suggestions', 'insert_link', 'dismiss_link', 'outbound_links', 'check_outbound',
+        'ai_status', 'list_goals', 'agent_status', 'pause_goal',
+        // Calendar
+        'list_events', 'check_availability', 'create_event', 'update_event',
     ],
 };
 
