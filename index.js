@@ -7,7 +7,7 @@ const { createRedisConnection }    = require('./redis');
 const { assembleSystemPrompt, getToolDefinitionsForLLM } = require('./prompt-assembler');
 const { runAgentLoop }             = require('./llm');
 const { getHistory, appendMessage, formatForLLM } = require('./conversation');
-const { startMeeting, getMeeting, userMessage, wrapUpMeeting } = require('./meeting-room');
+const { startMeeting, getMeeting, userMessage, directMessage, wrapUpMeeting, getPendingTasks, clearPendingTasks } = require('./meeting-room');
 const registry                     = require('./registry');
 const { v4: uuidv4 }               = require('uuid');
 
@@ -141,6 +141,33 @@ app.post('/internal/meeting/:id/message', requireSecret, async (req, res) => {
         if (result.error) return res.status(400).json(result);
         res.json(result);
     } catch(e) { res.status(500).json({ error:e.message }); }
+});
+
+/** Direct message to specific agent */
+app.post('/internal/meeting/:id/dm', requireSecret, async (req, res) => {
+    try {
+        const { agentId, content } = req.body;
+        const r = await directMessage(req.params.id, agentId, content);
+        res.json(r);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+/** Direct message */
+app.post('/internal/meeting/:id/dm', requireSecret, async (req,res) => {
+    try { const {agentId,content}=req.body; res.json(await directMessage(req.params.id,agentId,content)); }
+    catch(e){ res.status(500).json({error:e.message}); }
+});
+
+/** Get pending tasks awaiting approval */
+app.get('/internal/meeting/:id/pending-tasks', requireSecret, async (req,res) => {
+    try { const d=await getPendingTasks(req.params.id); res.json(d||{tasks:[]}); }
+    catch(e){ res.status(500).json({error:e.message}); }
+});
+
+/** Clear pending tasks (after WP approves/rejects) */
+app.delete('/internal/meeting/:id/pending-tasks', requireSecret, async (req,res) => {
+    try { await clearPendingTasks(req.params.id); res.json({ok:true}); }
+    catch(e){ res.status(500).json({error:e.message}); }
 });
 
 /** Wrap up meeting — user triggered */
