@@ -882,8 +882,129 @@ const CALENDAR_TOOLS = {
 // ══════════════════════════════════════════════════════════════════════════
 // FUTURE DOMAINS — Phase 4+ stubs
 // ══════════════════════════════════════════════════════════════════════════
-const BUILDER_TOOLS    = {}; // Phase 4
-const GOVERNANCE_TOOLS = {}; // Phase 4
+// ══════════════════════════════════════════════════════════════════════════
+// BUILDER DOMAIN — 6 tools (lubld/v1/*)
+// Partial Phase 4.5 — agents can read/modify pages, full autonomous workflows Phase 5+
+// ══════════════════════════════════════════════════════════════════════════
+const BUILDER_TOOLS = {
+
+    list_builder_pages: {
+        id:               'list_builder_pages',
+        domain:           'builder',
+        name:             'List Builder Pages',
+        description:      'List all builder pages with their status and WordPress publish state.',
+        wp_path:          '/lubld/v1/pages',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     ['status'],
+        params: {
+            status: { type: 'string', required: false, description: 'Filter by status: draft | published' },
+        },
+        returns:          'page[] (id, title, slug, status, wp_page_id, updated_at)',
+        requires_approval: false,
+        allowed_agents:   ['dmm', 'james', 'priya', 'alex'],
+    },
+
+    get_builder_page: {
+        id:               'get_builder_page',
+        domain:           'builder',
+        name:             'Get Builder Page',
+        description:      'Get full page data including all sections, containers, components, and active theme tokens.',
+        wp_path:          '/lubld/v1/pages/:id/full',
+        method:           'GET',
+        url_params:       ['id'],
+        body_params:      [],
+        query_params:     [],
+        params: {
+            id: { type: 'integer', required: true, description: 'Builder page ID' },
+        },
+        returns:          'Full page object with sections, containers, components, theme',
+        requires_approval: false,
+        allowed_agents:   ['dmm', 'james', 'priya', 'alex'],
+    },
+
+    ai_builder_action: {
+        id:               'ai_builder_action',
+        domain:           'builder',
+        name:             'AI Builder Action',
+        description:      'Send a natural language command to modify a builder page. Returns structured actions applied to the page (add section, update component, change theme, etc.).',
+        wp_path:          '/lubld/v1/ai/action',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['command', 'page_id'],
+        query_params:     [],
+        params: {
+            command: { type: 'string',  required: true, description: 'Natural language command e.g. "Add a testimonials section" or "Make the hero more modern"' },
+            page_id: { type: 'integer', required: true, description: 'Builder page ID to modify' },
+        },
+        returns:          '{ success, actions[], explanation }',
+        requires_approval: true,
+        approval_preview: 'Apply AI builder changes to page #{page_id}: "{command}".',
+        allowed_agents:   ['dmm', 'priya'],
+    },
+
+    generate_page_layout: {
+        id:               'generate_page_layout',
+        domain:           'builder',
+        name:             'Generate Page Layout',
+        description:      'Generate a complete page layout from a natural language prompt. Returns structured builder JSON ready to save as a new page.',
+        wp_path:          '/lubld/v1/ai/generate-layout',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['prompt', 'industry', 'sections'],
+        query_params:     [],
+        params: {
+            prompt:   { type: 'string',  required: true,  description: 'Describe the page to generate e.g. "SaaS homepage for a project management tool"' },
+            industry: { type: 'string',  required: false, description: 'Industry or niche for more relevant copy' },
+            sections: { type: 'integer', required: false, description: 'Number of sections to generate (default 5, max 8)' },
+        },
+        returns:          '{ success, layout: { title, sections[] } }',
+        requires_approval: true,
+        approval_preview: 'Generate a new page layout: "{prompt}". Creates structured builder JSON.',
+        allowed_agents:   ['dmm', 'priya'],
+    },
+
+    publish_builder_page: {
+        id:               'publish_builder_page',
+        domain:           'builder',
+        name:             'Publish Builder Page',
+        description:      'Publish a builder page to WordPress. Creates or updates a standard WP page with the LevelUp Builder template and returns the live URL.',
+        wp_path:          '/lubld/v1/pages/:id/publish',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      [],
+        query_params:     [],
+        params: {
+            id: { type: 'integer', required: true, description: 'Builder page ID to publish' },
+        },
+        returns:          '{ success, wp_page_id, url }',
+        requires_approval: true,
+        approval_preview: 'Publish builder page #{id} to WordPress as a live page.',
+        allowed_agents:   ['dmm'],
+    },
+
+    import_html_page: {
+        id:               'import_html_page',
+        domain:           'builder',
+        name:             'Import HTML to Builder',
+        description:      'Convert an HTML page or URL into builder JSON using the HTML→Builder converter pipeline.',
+        wp_path:          '/lubld/v1/convert/html',
+        method:           'POST',
+        url_params:       [],
+        body_params:      ['url', 'html'],
+        query_params:     [],
+        params: {
+            url:  { type: 'string', required: false, description: 'URL to fetch and convert' },
+            html: { type: 'string', required: false, description: 'Raw HTML to convert (use if URL is not publicly accessible)' },
+        },
+        returns:          '{ success, result: { title, sections[], stats } }',
+        requires_approval: false,
+        allowed_agents:   ['dmm', 'alex'],
+    },
+};
+
+const GOVERNANCE_TOOLS = {}; // Phase 5
 
 // ── Merge all domains ──────────────────────────────────────────────────────
 const ALL_TOOLS = Object.assign(

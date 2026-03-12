@@ -21,7 +21,6 @@
 const CAPABILITY_MAP = {
 
     // Sarah — DMM Director
-    // Full cross-domain access — orchestrates all agents and engines
     dmm: [
         // SEO
         'autonomous_goal', 'list_goals', 'agent_status', 'pause_goal', 'ai_status',
@@ -33,10 +32,11 @@ const CAPABILITY_MAP = {
         'create_post', 'schedule_post', 'list_posts', 'update_post', 'get_queue', 'record_social_analytics',
         // Calendar
         'create_event', 'list_events', 'update_event', 'check_availability', 'create_booking_slot',
+        // Builder
+        'list_builder_pages', 'get_builder_page', 'ai_builder_action', 'generate_page_layout', 'publish_builder_page', 'import_html_page',
     ],
 
     // James — SEO Specialist
-    // SEO research + read access to campaigns and pipeline for context
     james: [
         // SEO
         'serp_analysis', 'ai_report', 'deep_audit', 'ai_status', 'list_goals', 'agent_status', 'pause_goal',
@@ -48,10 +48,11 @@ const CAPABILITY_MAP = {
         'list_posts', 'get_queue',
         // Calendar
         'list_events', 'check_availability', 'create_event', 'update_event',
+        // Builder — read only
+        'list_builder_pages', 'get_builder_page',
     ],
 
     // Priya — Content Specialist
-    // Content creation across SEO + social + campaigns
     priya: [
         // SEO
         'write_article', 'improve_draft', 'ai_report', 'ai_status', 'list_goals', 'agent_status',
@@ -61,10 +62,11 @@ const CAPABILITY_MAP = {
         'create_post', 'update_post', 'list_posts',
         // Calendar
         'list_events', 'check_availability', 'create_event', 'update_event',
+        // Builder — content generation
+        'list_builder_pages', 'get_builder_page', 'ai_builder_action', 'generate_page_layout',
     ],
 
     // Marcus — Social Media Specialist
-    // Full social domain + campaign visibility + calendar
     marcus: [
         // SEO — utility only
         'ai_status', 'list_goals', 'agent_status',
@@ -77,7 +79,6 @@ const CAPABILITY_MAP = {
     ],
 
     // Elena — CRM Specialist
-    // Full CRM domain + calendar + campaign visibility
     elena: [
         // SEO — utility only
         'ai_status', 'list_goals', 'agent_status',
@@ -90,13 +91,14 @@ const CAPABILITY_MAP = {
     ],
 
     // Alex — Technical SEO Specialist
-    // Deep technical SEO + calendar
     alex: [
         // SEO — full technical access
         'deep_audit', 'link_suggestions', 'insert_link', 'dismiss_link', 'outbound_links', 'check_outbound',
         'ai_status', 'list_goals', 'agent_status', 'pause_goal',
         // Calendar
         'list_events', 'check_availability', 'create_event', 'update_event',
+        // Builder — read + import
+        'list_builder_pages', 'get_builder_page', 'import_html_page',
     ],
 };
 

@@ -12,6 +12,7 @@ const taskMemory   = require('./task-memory');
 const taskWorker   = require('./task-worker');
 const registry     = require('./registry');
 const { v4: uuidv4 }               = require('uuid');
+const { registerBuilderRoutes }    = require('./builder-ai');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -417,6 +418,9 @@ app.post('/internal/governance/reject', requireSecret, async (req, res) => {
 app.use((req, res) => res.status(404).json({ error:'Not found', path:req.path }));
 
 // ── Start ──────────────────────────────────────────────────────────────────
+// ── Builder AI routes ─────────────────────────────────────────────────────
+registerBuilderRoutes(app);
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`[SERVER] ✓ LevelUp Runtime Sprint C v2 on :${PORT}`);
     require('./worker');
