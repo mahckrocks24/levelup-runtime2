@@ -23,6 +23,7 @@ const router   = express.Router();
 const { enqueueTask, cancelTask, getQueueCounts, getDeadJobs, taskQueue } = require('./lu-queue');
 const { getState, transition, getLog, redis, TERMINAL }  = require('./lu-lifecycle');
 const { storeJobPayload }                       = require('./lu-recovery');
+const { emit }                                  = require('./lu-event-bus');  // Phase 8
 
 // ── Auth middleware ──────────────────────────────────────────────────
 router.use((req, res, next) => {
@@ -66,6 +67,10 @@ router.post('/enqueue', async (req, res) => {
   try {
     // Write lifecycle state before enqueuing (visible immediately for polling)
     await transition(task_id, 'queued', { agent_id, title: title || task_id, goal_id: goal_id || '' });
+
+    // Phase 8: emit task_created
+    emit({ type: 'task_created', task_id, goal_id, agent_id,
+      data: { title: title || task_id, tools } }).catch(() => {});
 
     // Store payload for crash recovery
     await storeJobPayload(task_id, payload);

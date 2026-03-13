@@ -34,6 +34,7 @@ const { sendInternalMessage,
         recordHandoff,
         getCollaborationSummary }        = require('./lu-collaborator');
 const { refineSingleTask }               = require('./lu-planner');
+const { emit }                           = require('./lu-event-bus');   // Phase 8
 
 const CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || '3', 10);
 
@@ -83,6 +84,10 @@ async function processJob(job) {
   await incrementAttempts(task_id);
   await transition(task_id, 'running', { agent_id, title, goal_id });
 
+  // Phase 8: emit task_started
+  emit({ type: 'task_started', task_id, goal_id, agent_id,
+    data: { title, tools, attempt: job.attemptsMade + 1 } }).catch(() => {});
+
   const t0 = Date.now();
 
   // ── Phase 7: Memory retrieval ─────────────────────────────────────
@@ -110,6 +115,10 @@ async function processJob(job) {
     event: 'agent_thinking',
     thoughts: agent_thoughts,
   }).catch(() => {});
+
+  // Phase 8: emit agent_reasoning
+  emit({ type: 'agent_reasoning', task_id, goal_id, agent_id,
+    data: { thoughts: agent_thoughts, tools } }).catch(() => {});
 
   // ── Phase 7: Param refinement from dependency outputs ────────────
   let params = { ...base_params };
@@ -155,6 +164,7 @@ async function processJob(job) {
     enriched_job_data,
     async (toolResult) => {
       completedTools += 1;
+      const progress = Math.round((completedTools / Math.max(tools.length, 1)) * 100);
       await recordToolEvent(task_id, toolResult);
       await appendLog(task_id, {
         ts:    Math.floor(Date.now() / 1000),
@@ -162,7 +172,6 @@ async function processJob(job) {
         tool:  toolResult.tool_id,
         ms:    toolResult.duration_ms,
       });
-      // Phase 7: append to reasoning trace
       await traceAppendToolOutput(task_id, toolResult).catch(() => {});
       await traceAppendStep(task_id, {
         step:    completedTools,
@@ -172,7 +181,24 @@ async function processJob(job) {
           ? JSON.stringify(toolResult.data || '').slice(0, 200)
           : (toolResult.error || 'error'),
       }).catch(() => {});
-      await job.updateProgress(Math.round((completedTools / Math.max(tools.length, 1)) * 100));
+      // Phase 8: emit tool_completed
+      emit({ type: 'tool_completed', task_id, goal_id, agent_id,
+        tool_id:  toolResult.tool_id,
+        progress,
+        data: {
+          status:      toolResult.status,
+          duration_ms: toolResult.duration_ms,
+          error:       toolResult.error || null,
+        },
+      }).catch(() => {});
+      await job.updateProgress(progress);
+    },
+    // Phase 8: onToolStart — emit before each tool call
+    async (tool_id, index) => {
+      const progress = Math.round((index / Math.max(tools.length, 1)) * 100);
+      emit({ type: 'tool_started', task_id, goal_id, agent_id,
+        tool_id, progress,
+        data: { tool_index: index, tools_total: tools.length } }).catch(() => {});
     }
   );
 
@@ -191,6 +217,18 @@ async function processJob(job) {
     tools_run:   tools.length.toString(),
     tools_ok:    results.filter(r => r.status === 'ok').length.toString(),
   });
+
+  // Phase 8: emit task_completed or task_partial
+  emit({
+    type:     final_status === 'complete' ? 'task_completed' : 'task_partial',
+    task_id, goal_id, agent_id, progress: 100,
+    data: {
+      title,
+      duration_ms,
+      tools_total: tools.length,
+      tools_ok:    results.filter(r => r.status === 'ok').length,
+    },
+  }).catch(() => {});
 
   // ── Phase 7: Persist task memory ─────────────────────────────────
   await taskMemoryWrite(task_id, {
@@ -263,6 +301,9 @@ worker.on('failed', async (job, err) => {
 
   if (isExhausted) {
     await transition(task_id, 'failed', { last_error: err.message });
+    // Phase 8: emit task_failed
+    emit({ type: 'task_failed', task_id, agent_id,
+      data: { error: err.message, attempts: job.attemptsMade } }).catch(() => {});
     if (callback_url) {
       await postResultCallback({
         callback_url, wp_secret: wp_secret || '',
@@ -278,6 +319,9 @@ worker.on('failed', async (job, err) => {
         last_error: err.message,
         attempt_number: job.attemptsMade.toString(),
       });
+      // Phase 8: emit task_retrying
+      emit({ type: 'task_retrying', task_id, agent_id,
+        data: { error: err.message, attempt_number: job.attemptsMade } }).catch(() => {});
     } catch (_) {}
   }
 });

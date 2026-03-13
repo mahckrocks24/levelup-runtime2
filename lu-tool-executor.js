@@ -82,15 +82,21 @@ async function executeTool({ tool_id, agent_id, task_id, params, wp_url, wp_secr
  *
  * @param {object[]} tools         — array of tool_ids
  * @param {object}   taskPayload   — job data from BullMQ
- * @param {Function} onToolDone    — async (result) => void — called after each tool
+ * @param {Function} [onToolDone]  — async (result) => void — called after each tool
+ * @param {Function} [onToolStart] — async (tool_id, index) => void — called before each tool (Phase 8)
  * @returns {Promise<{results, all_ok}>}
  */
-async function executeTools(tools, taskPayload, onToolDone) {
+async function executeTools(tools, taskPayload, onToolDone, onToolStart) {
   const { agent_id, task_id, params = {}, wp_url, wp_secret } = taskPayload;
   const results = [];
   let all_ok = true;
 
-  for (const tool_id of tools) {
+  for (let i = 0; i < tools.length; i++) {
+    const tool_id = tools[i];
+    // Optional pre-tool hook (Phase 8 activity events) — never blocks on error
+    if (typeof onToolStart === 'function') {
+      await onToolStart(tool_id, i).catch(() => {});
+    }
     const result = await executeTool({ tool_id, agent_id, task_id, params, wp_url, wp_secret });
     results.push(result);
     if (result.status !== 'ok') all_ok = false;
