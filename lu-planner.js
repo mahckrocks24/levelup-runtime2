@@ -1,0 +1,253 @@
+/**
+ * LevelUp — Task Planning Engine
+ *
+ * Converts a user goal + workspace context into a structured, ordered
+ * multi-agent execution plan using DeepSeek.
+ *
+ * Called by:
+ *   POST /internal/agent/plan   (from PHP lu_agent_plan_create)
+ *   lu-task-worker.js           (for inline re-planning on complex tasks)
+ *
+ * Plan output:
+ * {
+ *   goal_id, goal, tasks: [
+ *     { seq, title, agent, tools[], params{}, rationale, depends_on[] }
+ *   ]
+ * }
+ *
+ * Falls back to single-task scaffold if LLM is unavailable.
+ */
+
+'use strict';
+
+const { buildContextPrompt } = require('./lu-context');
+
+const DEEPSEEK_URL   = 'https://api.deepseek.com/v1/chat/completions';
+const PLAN_TIMEOUT   = 45_000;
+const MAX_PLAN_TASKS = 8;
+
+// ── Agent roster (mirrors PHP lu_capability_map) ─────────────────────
+const AGENT_ROSTER = {
+  sarah:  { role: 'Digital Marketing Manager', tools: ['autonomous_goal','list_goals','agent_status','pause_goal','create_campaign','schedule_campaign','list_campaigns'] },
+  james:  { role: 'SEO Strategist',            tools: ['serp_analysis','ai_report','deep_audit','link_suggestions','insert_link','dismiss_link','outbound_links','check_outbound'] },
+  priya:  { role: 'Content Manager',           tools: ['write_article','improve_draft','create_post','update_post','create_campaign','schedule_campaign','create_template'] },
+  marcus: { role: 'Social Media Manager',      tools: ['create_post','schedule_post','publish_post','list_posts','get_queue','record_social_analytics'] },
+  elena:  { role: 'CRM & Lead Manager',        tools: ['create_lead','get_lead','update_lead','list_leads','move_lead','log_activity','add_note','enroll_sequence'] },
+  alex:   { role: 'Technical SEO',             tools: ['insert_link','dismiss_link','outbound_links','check_outbound','deep_audit','list_builder_pages','get_builder_page'] },
+  _any:   { role: 'Any Agent',                 tools: ['ai_status','create_event','list_events','update_event','check_availability','record_metric'] },
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// PLAN REQUEST SCHEMA (for LLM system prompt)
+// ─────────────────────────────────────────────────────────────────────
+
+function buildPlanSystemPrompt(context) {
+  const contextBlock = buildContextPrompt(context);
+  const agentBlock   = Object.entries(AGENT_ROSTER)
+    .filter(([id]) => id !== '_any')
+    .map(([id, a]) => `  ${id} (${a.role}): ${a.tools.join(', ')}`)
+    .join('\n');
+
+  return `You are the LevelUp task planner for a digital marketing platform.
+Your job is to decompose a user's goal into an ordered list of agent tasks.
+
+${contextBlock}
+
+AVAILABLE AGENTS AND THEIR TOOLS:
+${agentBlock}
+
+RULES:
+- Return ONLY valid JSON. No markdown, no explanation outside the JSON.
+- Maximum ${MAX_PLAN_TASKS} tasks.
+- Each task must use only tools that belong to the assigned agent (or _any tools).
+- Tasks that can run independently should have empty depends_on[].
+- Tasks that need results from a previous task should list its seq number in depends_on.
+- Keep rationale short (one sentence max).
+- Prefer sequential plans over parallel when output of one task feeds the next.
+
+RESPONSE FORMAT (strict JSON):
+{
+  "tasks": [
+    {
+      "seq": 1,
+      "title": "Short task title",
+      "agent": "agent_id",
+      "tools": ["tool_id"],
+      "params": {},
+      "rationale": "Why this step is needed.",
+      "depends_on": []
+    }
+  ]
+}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DEEPSEEK CALL
+// ─────────────────────────────────────────────────────────────────────
+
+async function callDeepSeek(system_prompt, user_message) {
+  const api_key = process.env.DEEPSEEK_API_KEY;
+  if (!api_key) throw new Error('DEEPSEEK_API_KEY not set');
+
+  const body = JSON.stringify({
+    model: 'deepseek-chat',
+    messages: [
+      { role: 'system',  content: system_prompt },
+      { role: 'user',    content: user_message },
+    ],
+    temperature:  0.3,
+    max_tokens:   1500,
+    response_format: { type: 'json_object' },
+  });
+
+  const res = await fetch(DEEPSEEK_URL, {
+    method:  'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${api_key}`,
+    },
+    body,
+    signal: AbortSignal.timeout(PLAN_TIMEOUT),
+  });
+
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`DeepSeek API error ${res.status}: ${err.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('Empty response from DeepSeek');
+
+  return JSON.parse(content);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// VALIDATE & NORMALISE PLAN
+// ─────────────────────────────────────────────────────────────────────
+
+function normalisePlan(raw_plan, goal_id, goal) {
+  const tasks = (raw_plan?.tasks || []).slice(0, MAX_PLAN_TASKS);
+  if (!tasks.length) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  return tasks.map((t, i) => {
+    const agent  = String(t.agent || 'sarah').toLowerCase();
+    const roster = AGENT_ROSTER[agent] || AGENT_ROSTER.sarah;
+    const any    = AGENT_ROSTER._any.tools;
+
+    // Sanitise tools — keep only tools this agent is allowed to use
+    const all_allowed = [...roster.tools, ...any];
+    const tools = (Array.isArray(t.tools) ? t.tools : [])
+      .map(String)
+      .filter(tool => all_allowed.includes(tool));
+
+    // Fallback: if no valid tools, use agent's first tool
+    const final_tools = tools.length ? tools : [roster.tools[0]];
+
+    return {
+      task_id:    `t_${goal_id}_${i + 1}`,
+      seq:        i + 1,
+      title:      String(t.title  || `Task ${i + 1}`).slice(0, 120),
+      agent,
+      tools:      final_tools,
+      params:     (t.params && typeof t.params === 'object') ? t.params : {},
+      rationale:  String(t.rationale || '').slice(0, 200),
+      depends_on: Array.isArray(t.depends_on)
+                    ? t.depends_on.map(Number).filter(n => n > 0 && n < i + 1)
+                    : [],
+      status:     'pending',
+      output_id:  null,
+      created_at: now,
+    };
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// SCAFFOLD FALLBACK
+// ─────────────────────────────────────────────────────────────────────
+
+function scaffoldPlan(goal_id, goal) {
+  return [{
+    task_id:    `t_${goal_id}_1`,
+    seq:        1,
+    title:      goal,
+    agent:      'sarah',
+    tools:      ['autonomous_goal'],
+    params:     { goal },
+    rationale:  'Single-agent fallback — planner unavailable.',
+    depends_on: [],
+    status:     'pending',
+    output_id:  null,
+    created_at: Math.floor(Date.now() / 1000),
+  }];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PUBLIC API
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Generate a task plan for a goal.
+ *
+ * @param {string} goal_id
+ * @param {string} goal
+ * @param {object} context   — workspace context from lu-context.js
+ * @param {string} extra_ctx — optional freeform context string from user
+ * @returns {Promise<{tasks, used_llm, error?}>}
+ */
+async function createPlan({ goal_id, goal, context = {}, extra_ctx = '' }) {
+  const system_prompt = buildPlanSystemPrompt(context);
+  const user_message  = extra_ctx
+    ? `Goal: ${goal}\n\nAdditional context: ${extra_ctx}`
+    : `Goal: ${goal}`;
+
+  try {
+    const raw = await callDeepSeek(system_prompt, user_message);
+    const tasks = normalisePlan(raw, goal_id, goal);
+    if (!tasks || !tasks.length) {
+      console.warn('[planner] LLM returned empty plan — using scaffold');
+      return { tasks: scaffoldPlan(goal_id, goal), used_llm: false, error: 'empty_plan' };
+    }
+    console.log(`[planner] Generated ${tasks.length}-task plan for goal ${goal_id}`);
+    return { tasks, used_llm: true };
+  } catch (e) {
+    console.error('[planner] Planning failed, using scaffold:', e.message);
+    return { tasks: scaffoldPlan(goal_id, goal), used_llm: false, error: e.message };
+  }
+}
+
+/**
+ * Re-plan a single task given partial results from completed dependencies.
+ * Used when a running task needs to adapt based on earlier outputs.
+ */
+async function refineSingleTask({ task_id, title, agent, tools, context, dependency_outputs = [] }) {
+  if (!dependency_outputs.length) return null;
+
+  const system_prompt = buildPlanSystemPrompt(context);
+  const dep_summary = dependency_outputs
+    .map(d => `[${d.agent_id}] ${d.output_summary || ''}`)
+    .join('\n');
+
+  const user_message = `Refine params for this single task based on prior results.
+
+Task: ${title}
+Agent: ${agent}
+Tools: ${tools.join(', ')}
+
+Prior agent outputs:
+${dep_summary}
+
+Return a JSON object with a single "params" key containing refined task parameters.
+Example: {"params": {"keyword": "landing page optimization", "tone": "professional"}}`;
+
+  try {
+    const raw = await callDeepSeek(system_prompt, user_message);
+    return raw?.params || null;
+  } catch (e) {
+    console.warn('[planner] Param refinement failed:', e.message);
+    return null;
+  }
+}
+
+module.exports = { createPlan, refineSingleTask, scaffoldPlan, AGENT_ROSTER };
