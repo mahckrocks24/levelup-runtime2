@@ -28,7 +28,7 @@ const MAX_PLAN_TASKS = 8;
 
 // ── Agent roster (mirrors PHP lu_capability_map) ─────────────────────
 const AGENT_ROSTER = {
-  sarah:  { role: 'Digital Marketing Manager', tools: ['autonomous_goal','list_goals','agent_status','pause_goal','create_campaign','schedule_campaign','list_campaigns'] },
+  dmm:    { role: 'Digital Marketing Manager', tools: ['autonomous_goal','list_goals','agent_status','pause_goal','create_campaign','schedule_campaign','list_campaigns'] },
   james:  { role: 'SEO Strategist',            tools: ['serp_analysis','ai_report','deep_audit','link_suggestions','insert_link','dismiss_link','outbound_links','check_outbound'] },
   priya:  { role: 'Content Manager',           tools: ['write_article','improve_draft','create_post','update_post','create_campaign','schedule_campaign','create_template'] },
   marcus: { role: 'Social Media Manager',      tools: ['create_post','schedule_post','publish_post','list_posts','get_queue','record_social_analytics'] },
@@ -132,8 +132,8 @@ function normalisePlan(raw_plan, goal_id, goal) {
 
   const now = Math.floor(Date.now() / 1000);
   return tasks.map((t, i) => {
-    const agent  = String(t.agent || 'sarah').toLowerCase();
-    const roster = AGENT_ROSTER[agent] || AGENT_ROSTER.sarah;
+    const agent  = String(t.agent || 'dmm').toLowerCase();
+    const roster = AGENT_ROSTER[agent] || AGENT_ROSTER.dmm;
     const any    = AGENT_ROSTER._any.tools;
 
     // Sanitise tools — keep only tools this agent is allowed to use
@@ -172,7 +172,7 @@ function scaffoldPlan(goal_id, goal) {
     task_id:    `t_${goal_id}_1`,
     seq:        1,
     title:      goal,
-    agent:      'sarah',
+    agent:      'dmm',
     tools:      ['autonomous_goal'],
     params:     { goal },
     rationale:  'Single-agent fallback — planner unavailable.',

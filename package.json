@@ -1,7 +1,7 @@
 {
   "name": "levelup-runtime",
-  "version": "0.1.0",
-  "description": "LevelUp Growth — Node.js Agent Runtime. Sprint A.",
+  "version": "2.13.0",
+  "description": "LevelUp Growth \u2014 Node.js Agent Runtime v2.13.0 Phase 1A",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
