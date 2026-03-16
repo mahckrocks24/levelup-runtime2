@@ -179,10 +179,6 @@ Answer concisely as your specialist role. Be direct and actionable.`;
 // Pre-fetch agents on module load (non-blocking)
 getAgents().catch(() => {});
 
-// Re-export meeting prompt architecture so meeting-room.js
-// can require everything from a single './agents' path (backward compat).
-const meetingPrompts = require('./meeting-prompts');
-
 module.exports = {
     AGENTS,
     AGENTS_STATIC,
@@ -196,7 +192,4 @@ module.exports = {
     getTeamRoster,
     buildAssistantPrompt,
     buildAgentConsultPrompt,
-
-    // Meeting prompt architecture (restored from meeting-prompts.js)
-    ...meetingPrompts,
 };
