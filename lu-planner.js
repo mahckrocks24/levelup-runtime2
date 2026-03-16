@@ -26,16 +26,32 @@ const DEEPSEEK_URL   = 'https://api.deepseek.com/v1/chat/completions';
 const PLAN_TIMEOUT   = 45_000;
 const MAX_PLAN_TASKS = 8;
 
-// ── Agent roster (mirrors PHP lu_capability_map) ─────────────────────
-const AGENT_ROSTER = {
-  dmm:    { role: 'Digital Marketing Manager', tools: ['autonomous_goal','list_goals','agent_status','pause_goal','create_campaign','schedule_campaign','list_campaigns'] },
-  james:  { role: 'SEO Strategist',            tools: ['serp_analysis','ai_report','deep_audit','link_suggestions','insert_link','dismiss_link','outbound_links','check_outbound'] },
-  priya:  { role: 'Content Manager',           tools: ['write_article','improve_draft','create_post','update_post','create_campaign','schedule_campaign','create_template'] },
-  marcus: { role: 'Social Media Manager',      tools: ['create_post','schedule_post','publish_post','list_posts','get_queue','record_social_analytics'] },
-  elena:  { role: 'CRM & Lead Manager',        tools: ['create_lead','get_lead','update_lead','list_leads','move_lead','log_activity','add_note','enroll_sequence'] },
-  alex:   { role: 'Technical SEO',             tools: ['insert_link','dismiss_link','outbound_links','check_outbound','deep_audit','list_builder_pages','get_builder_page'] },
-  _any:   { role: 'Any Agent',                 tools: ['ai_status','create_event','list_events','update_event','check_availability','record_metric'] },
+// ── Agent roster — built dynamically from capability-map ─────────────
+// capability-map.js is the single source of truth for agent permissions.
+// This eliminates duplication and ensures planner always matches WP capabilities.
+const { CAPABILITY_MAP } = require('./capability-map');
+
+const AGENT_ROLES = {
+  dmm:    'Digital Marketing Manager',
+  james:  'SEO Strategist',
+  priya:  'Content Manager',
+  marcus: 'Social Media Manager',
+  elena:  'CRM & Lead Manager',
+  alex:   'Technical SEO',
+  _any:   'Any Agent',
 };
+
+// Build AGENT_ROSTER from CAPABILITY_MAP — same shape as before
+const AGENT_ROSTER = Object.keys(CAPABILITY_MAP).reduce((acc, agent_id) => {
+  acc[agent_id] = {
+    role:  AGENT_ROLES[agent_id] || agent_id,
+    tools: CAPABILITY_MAP[agent_id] || [],
+  };
+  return acc;
+}, {
+  // _any tools from CAPABILITY_MAP don't have a separate entry — add static fallback
+  _any: { role: 'Any Agent', tools: ['ai_status','create_event','list_events','update_event','check_availability','record_metric'] },
+});
 
 // ─────────────────────────────────────────────────────────────────────
 // PLAN REQUEST SCHEMA (for LLM system prompt)

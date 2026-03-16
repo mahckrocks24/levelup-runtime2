@@ -13,6 +13,7 @@ const taskWorker   = require('./task-worker');
 const registry     = require('./registry');
 const { v4: uuidv4 }               = require('uuid');
 const { registerBuilderRoutes }    = require('./builder-ai');
+const synthesisRoutes              = require('./lu-synthesis-routes');
 
 // ── Phase 1A: Lu-module imports ────────────────────────────────────────────
 const taskQueueRoutes    = require('./lu-task-queue-routes');
@@ -26,7 +27,8 @@ app.use(express.json());
 
 console.log('[STARTUP] LevelUp Runtime v2.13.0 — Phase 1A');
 console.log('[STARTUP] REDIS_URL    :', process.env.REDIS_URL        ? 'SET ✓' : 'NOT SET ✗');
-console.log('[STARTUP] WP_SECRET    :', process.env.WP_SECRET        ? 'SET ✓' : 'NOT SET ✗');
+console.log('[STARTUP] WP_SECRET          :', process.env.WP_SECRET          ? 'SET ✓' : 'NOT SET ✗');
+console.log('[STARTUP] SYNTHESIS_ENDPOINT :', process.env.SYNTHESIS_ENDPOINT ? 'SET ✓' : 'NOT SET — tasks will skip LLM synthesis');
 console.log('[STARTUP] LU_SECRET    :', process.env.LU_SECRET        ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] DEEPSEEK_KEY :', process.env.DEEPSEEK_API_KEY ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] Tools        :', registry.list().map(t=>t.name).join(', '));
@@ -374,6 +376,10 @@ app.use('/internal/activity', activityRoutes);
 
 // Builder AI routes
 registerBuilderRoutes(app);
+
+// Synthesis route — called by lu-task-worker.js when SYNTHESIS_ENDPOINT is set
+// Set Railway env: SYNTHESIS_ENDPOINT=https://<runtime-url>/internal/synthesize
+app.use('/internal/synthesize', synthesisRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error:'Not found', path:req.path }));
