@@ -50,14 +50,30 @@ function isInternal(ctx) {
 function fmtCtx(ctx) {
     if (!ctx) return '';
     const lines = [];
-    if (ctx.businessName)    lines.push(`Business: ${ctx.businessName}`);
+
+    // Business identity — try both naming conventions (businessName from WP, business_name from Redis)
+    const bname = ctx.businessName || ctx.business_name || '';
+    if (bname)               lines.push(`Business: ${bname}`);
     if (ctx.industry)        lines.push(`Industry: ${ctx.industry}`);
-    if (ctx.website)         lines.push(`Website: ${ctx.website}`);
-    if (ctx.goals)           lines.push(`Goals: ${ctx.goals}`);
+    if (ctx.location)        lines.push(`Location: ${ctx.location}`);
+    if (ctx.website || ctx.website_url) lines.push(`Website: ${ctx.website || ctx.website_url}`);
+    if (ctx.business_desc)   lines.push(`Description: ${ctx.business_desc}`);
+
+    // Services — always render as a bulleted list so agents can't miss it
+    const svcs = Array.isArray(ctx.services) ? ctx.services : [];
+    if (svcs.length) {
+        lines.push(`Services offered:\n${svcs.map(s => `  • ${s}`).join('\n')}`);
+    }
+
+    if (ctx.target_audience) lines.push(`Target market: ${ctx.target_audience}`);
     if (ctx.brand_voice)     lines.push(`Brand voice: ${ctx.brand_voice}`);
-    if (ctx.target_audience) lines.push(`Target audience: ${ctx.target_audience}`);
+    if (ctx.competitors)     lines.push(`Key competitors: ${ctx.competitors}`);
+    if (ctx.goals)           lines.push(`Business goals: ${ctx.goals}`);
+
+    // Meeting-specific
     if (ctx.topic)           lines.push(`Meeting topic: ${ctx.topic}`);
     if (ctx.type)            lines.push(`Meeting type: ${ctx.type}`);
+
     return lines.length ? lines.join('\n') : '';
 }
 
@@ -82,7 +98,8 @@ HARD RULES (apply always):
 - Be direct. No filler phrases like "Great point!" or "Absolutely!".
 - When you cite data, be specific (percentages, volumes, timeframes).
 - If you disagree, say so clearly and explain why.
-- Keep your response under 200 words unless the topic demands more.`;
+- Keep your response under 200 words unless the topic demands more.
+- CRITICAL: You are working for the specific business defined in WORKSPACE CONTEXT above. Every strategy, keyword, campaign idea, and recommendation MUST be relevant to that business's industry, services, and location. Do NOT produce generic examples. Do NOT suggest services, keywords, or tactics unrelated to the workspace business.`;
 
 const INTERNAL_RAILS = `
 MEETING MODE: Internal — no user is present.
@@ -138,9 +155,12 @@ ${roster}
 
 YOUR JOB RIGHT NOW:
 1. Open the meeting with a crisp brief: what the objective is, why it matters, and what a good outcome looks like.
-2. Identify which 2–4 specialists are most relevant to this specific topic.
-3. Give each named specialist a precise, focused instruction — not a vague "share your thoughts".
-4. Set the analytical direction: what angle should the team take?
+2. Reference the workspace business by name and anchor every point to their specific industry, services, and location.
+3. Identify which 2–4 specialists are most relevant to this specific topic.
+4. Give each named specialist a precise, focused instruction tied to the actual business — not generic examples.
+5. Set the analytical direction: what angle should the team take?
+
+MANDATORY: All examples, keywords, campaigns, and strategies in this meeting must be specific to the workspace business above. If the business sells furniture in UAE, every suggestion must relate to furniture, interior design, or the UAE market.
 
 ${MANAGER_FORMAT}
 ${HARD_RAILS}`;
@@ -286,6 +306,8 @@ ${history}
 
 YOUR TASK FOR THIS TURN:
 ${task || 'Give your expert perspective on the topic being discussed.'}
+
+CONTEXT REMINDER: You are advising the specific business above — not a generic business. Every keyword, tactic, channel, and recommendation must be relevant to their industry, services, and market. Using examples from unrelated industries (e.g. cleaning services when the client sells furniture) is a critical error.
 
 TOOL USE:
 If real data would materially improve your answer, call a tool using this format:

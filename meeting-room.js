@@ -6,6 +6,7 @@ const { createRedisConnection }    = require('./redis');
 const { callLLM }                  = require('./llm');
 const meetingStateLib              = require('./meeting-state');
 const workspaceMemory              = require('./workspace-memory');
+const { getWorkspaceContext, buildContextPrompt } = require('./lu-context');
 const { parseToolCall, executeTool, formatToolResult } = require('./tool-executor');
 const {
     AGENTS, TOKENS,
@@ -299,14 +300,41 @@ async function runRound(mid, ctx, specialists, tasks) {
 
 // ── Start meeting ─────────────────────────────────────────────────────────
 async function startMeeting(mid, ctx) {
+    // ── Context enrichment — merge WP-supplied fields with full workspace profile ──
+    // ctx already contains: topic, type, businessName, website, industry, services,
+    // goals, brand_voice, target_audience, location from lu_mtg_start in WordPress.
+    // We additionally call getWorkspaceContext() to merge Redis long-term memory
+    // (past campaigns, learned tone) and apply a 15-min cache for performance.
+    const wp_url    = process.env.WP_URL || ctx.website || '';
+    const wp_secret = process.env.WP_SECRET || '';
+
+    let enrichedCtx = { ...ctx };
+    try {
+        const wpCtx = await getWorkspaceContext(wp_url, wp_secret);
+        // WP-supplied values take priority (freshest source).
+        // Merge Redis-learned enrichments for fields not already set.
+        enrichedCtx = {
+            ...wpCtx,               // Redis baseline (past campaigns, learned tone, etc.)
+            ...ctx,                  // WP-supplied values override — always freshest
+            // Ensure services is always an array
+            services: Array.isArray(ctx.services) && ctx.services.length
+                ? ctx.services
+                : (Array.isArray(wpCtx.services) ? wpCtx.services : []),
+        };
+        console.log(`[MTG:${mid}] Context: business="${enrichedCtx.businessName||enrichedCtx.business_name}" industry="${enrichedCtx.industry}" services=${JSON.stringify(enrichedCtx.services).slice(0,80)}`);
+    } catch (e) {
+        console.warn(`[MTG:${mid}] Context enrichment failed — using supplied ctx:`, e.message);
+    }
+
     await saveMeeting(mid, {
-        id: mid, topic: ctx.topic, type: ctx.type || 'brainstorm', context: ctx,
+        id: mid, topic: enrichedCtx.topic, type: enrichedCtx.type || 'brainstorm',
+        context: enrichedCtx,
         status: 'starting', phase: 'starting',
         messages: [], spokenAgents: [], current_speaker: null,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     });
     await meetingStateLib.initState(mid);
-    runMeeting(mid, ctx).catch(err => {
+    runMeeting(mid, enrichedCtx).catch(err => {
         console.error(`[MTG:${mid}] Fatal:`, err.message);
         setState(mid, 'error', { error: err.message });
     });

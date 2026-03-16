@@ -123,12 +123,14 @@ async function getWorkspaceContext(wp_url, wp_secret, force_refresh = false) {
     industry:        wp_context.industry         || redis_context.industry         || '',
     business_desc:   wp_context.business_desc    || redis_context.business_desc    || '',
     website_url:     wp_context.website_url      || redis_context.website_url      || '',
+    location:        wp_context.location         || redis_context.location         || '',
 
     // Brand & audience (from WP, enriched by Redis)
     brand_voice:     wp_context.brand_voice      || redis_context.brand_voice      || '',
     target_audience: wp_context.target_audience  || redis_context.target_audience  || '',
     services:        wp_context.services         || redis_context.services         || [],
     goals:           wp_context.goals            || redis_context.goals            || '',
+    competitors:     wp_context.competitors      || redis_context.competitors      || '',
 
     // Runtime-enriched fields (Redis only)
     past_campaigns:  redis_context.past_campaigns || [],
@@ -167,21 +169,23 @@ function buildContextPrompt(context) {
   if (!context || !context.business_name) return '';
 
   const lines = [];
-  if (context.business_name)   lines.push(`Business: ${context.business_name}`);
+  lines.push(`Business: ${context.business_name}`);
   if (context.industry)         lines.push(`Industry: ${context.industry}`);
+  if (context.location)         lines.push(`Location: ${context.location}`);
   if (context.business_desc)    lines.push(`Description: ${context.business_desc}`);
-  if (context.brand_voice)      lines.push(`Brand voice: ${context.brand_voice}`);
-  if (context.target_audience)  lines.push(`Target audience: ${context.target_audience}`);
-
-  const services = Array.isArray(context.services)
-    ? context.services.join(', ')
-    : String(context.services || '');
-  if (services) lines.push(`Services: ${services}`);
-
-  if (context.goals)            lines.push(`Current goals: ${context.goals}`);
   if (context.website_url)      lines.push(`Website: ${context.website_url}`);
 
-  return lines.length ? `[WORKSPACE CONTEXT]\n${lines.join('\n')}\n[/WORKSPACE CONTEXT]` : '';
+  const services = Array.isArray(context.services) ? context.services : [];
+  if (services.length) {
+    lines.push(`Services:\n${services.map(s => `  • ${s}`).join('\n')}`);
+  }
+
+  if (context.target_audience)  lines.push(`Target market: ${context.target_audience}`);
+  if (context.brand_voice)      lines.push(`Brand voice: ${context.brand_voice}`);
+  if (context.competitors)      lines.push(`Competitors: ${context.competitors}`);
+  if (context.goals)            lines.push(`Goals: ${context.goals}`);
+
+  return lines.length ? `[WORKSPACE CONTEXT]\n${lines.join('\n')}\n[/WORKSPACE CONTEXT]\n` : '';
 }
 
 module.exports = {
