@@ -669,10 +669,21 @@ function parseManagerResponse(raw) {
     // Reply = everything before SPECIALISTS line
     const replyRaw = text.split(/SPECIALISTS:/i)[0].trim();
 
-    // Strip the TASKS line if it leaked into the reply
-    const reply = replyRaw.replace(/TASKS:[\s\S]*/i, '').trim();
+    // Strip all format artifacts: TASKS lines, stray JSON, empty braces
+    const reply = replyRaw
+        .replace(/TASKS:[\s\S]*/i, '')       // TASKS: line and everything after
+        .replace(/^\s*\{\s*\}\s*$/gm, '')  // bare {} on its own line
+        .replace(/^\s*tasks\s*:\s*\{[^}]*\}\s*$/gim, '') // tasks: {} variants
+        .replace(/^\s*SPECIALISTS:[^\n]*/gim, '') // stray SPECIALISTS line
+        .trim();
 
-    return { reply, specialists, tasks };
+    // If nothing meaningful remains, return empty
+    const cleanReply = reply.replace(/[\s\n]+/g, ' ').trim();
+    if (!cleanReply || cleanReply === '{}' || cleanReply.toLowerCase() === 'tasks: {}') {
+        return { reply: '', specialists, tasks };
+    }
+
+    return { reply: cleanReply, specialists, tasks };
 }
 
 /**
