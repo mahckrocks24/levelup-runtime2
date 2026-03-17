@@ -113,7 +113,7 @@ async function refreshInsights(wp_url, wp_secret) {
 
   // Check cache — skip if computed recently
   try {
-    const cached = await redis.get(MEM_KEY + ':ts');.catch(() => null)
+    const cached = await redis.get(MEM_KEY + ':ts').catch(() => null)
     if (cached && (Date.now() / 1000 - parseInt(cached)) < CACHE_TTL) {
       console.log('[campaign-learning] Insights current — skip refresh');
       return null;
@@ -136,8 +136,8 @@ async function refreshInsights(wp_url, wp_secret) {
   };
 
   try {
-    await redis.set(MEM_KEY,       JSON.stringify(insights), 'EX', MEM_TTL);.catch(() => {})
-    await redis.set(MEM_KEY + ':ts', String(Math.floor(Date.now() / 1000)), 'EX', MEM_TTL);.catch(() => {})
+    await redis.set(MEM_KEY,       JSON.stringify(insights), 'EX', MEM_TTL).catch(() => {})
+    await redis.set(MEM_KEY + ':ts', String(Math.floor(Date.now() / 1000)), 'EX', MEM_TTL).catch(() => {})
     console.log('[campaign-learning] Insights stored in workspace memory');
   } catch (e) {
     console.error('[campaign-learning] Redis write failed:', e.message);
@@ -150,7 +150,7 @@ async function refreshInsights(wp_url, wp_secret) {
  */
 async function readInsights() {
   try {
-    const raw = await redis.get(MEM_KEY);.catch(() => null)
+    const raw = await redis.get(MEM_KEY).catch(() => null)
     return raw ? JSON.parse(raw) : null;
   } catch (_) { return null; }
 }

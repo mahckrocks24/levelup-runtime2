@@ -75,7 +75,7 @@ async function generateToolKnowledge(tool) {
  */
 async function storeKnowledge(tool_id, knowledge) {
   try {
-    await redis.set(`${KEY_PREFIX}${tool_id}`, JSON.stringify(knowledge), 'EX', TTL);.catch(() => {})
+    await redis.set(`${KEY_PREFIX}${tool_id}`, JSON.stringify(knowledge), 'EX', TTL).catch(() => {})
     console.log(`[tool-learning] Knowledge stored for ${tool_id}`);
     return true;
   } catch (e) {
@@ -89,7 +89,7 @@ async function storeKnowledge(tool_id, knowledge) {
  */
 async function readKnowledge(tool_id) {
   try {
-    const raw = await redis.get(`${KEY_PREFIX}${tool_id}`);.catch(() => null)
+    const raw = await redis.get(`${KEY_PREFIX}${tool_id}`).catch(() => null)
     return raw ? JSON.parse(raw) : null;
   } catch (_) { return null; }
 }

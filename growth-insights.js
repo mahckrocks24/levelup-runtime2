@@ -157,7 +157,7 @@ async function generateInsights(wp_url, secret) {
   };
 
   try {
-    await redis.set(INSIGHTS_KEY, JSON.stringify(insights), 'EX', INSIGHTS_TTL);.catch(() => {})
+    await redis.set(INSIGHTS_KEY, JSON.stringify(insights), 'EX', INSIGHTS_TTL).catch(() => {})
     console.log(`[growth-insights] ${allGaps.length} gaps, ${opportunities.length} opportunities stored`);
   } catch (e) {
     console.error('[growth-insights] Redis write:', e.message);
@@ -167,7 +167,7 @@ async function generateInsights(wp_url, secret) {
 
 async function readInsights() {
   try {
-    const raw = await redis.get(INSIGHTS_KEY);.catch(() => null)
+    const raw = await redis.get(INSIGHTS_KEY).catch(() => null)
     return raw ? JSON.parse(raw) : null;
   } catch (_) { return null; }
 }

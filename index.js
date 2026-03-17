@@ -438,12 +438,12 @@ app.post('/internal/assistant', requireSecret, async (req, res) => {
                 const synthPrompt = bac('dmm', message, workspaceCtx);
                 const synthMessages = [
                     { role:'system', content: synthPrompt },
-                    { role:'user', content: \`The team has weighed in on: "\${message}"
+                    { role:'user', content: `The team has weighed in on: "${message}"
 
 Team inputs:
-\${contributions.join('\n\n')}
+${contributions.join('\n\n')}
 
-Synthesise into one clear strategic recommendation with specific action steps.\` },
+Synthesise into one clear strategic recommendation with specific action steps.` },
                 ];
                 const synthR = await Promise.race([
                     callLLM({ messages: synthMessages, max_tokens: 800, temperature: 0.5 }),

@@ -127,7 +127,7 @@ async function runHealthChecks(wp_url, wp_secret, opts = {}) {
       health.checked_at = Math.floor(Date.now() / 1000);
 
       try {
-        await redis.set(KEY(tool.id), JSON.stringify(health), 'EX', TTL);.catch(() => {})
+        await redis.set(KEY(tool.id), JSON.stringify(health), 'EX', TTL).catch(() => {})
       } catch (_) {}
 
       results.checked++;
@@ -148,7 +148,7 @@ async function runHealthChecks(wp_url, wp_secret, opts = {}) {
  */
 async function getToolHealth(tool_id) {
   try {
-    const raw = await redis.get(KEY(tool_id));.catch(() => null)
+    const raw = await redis.get(KEY(tool_id)).catch(() => null)
     return raw ? JSON.parse(raw) : null;
   } catch (_) { return null; }
 }
