@@ -292,7 +292,7 @@ async function markSpoken(mid, agentId) {
 }
 
 // ── Round runner ──────────────────────────────────────────────────────────
-async function runRound(mid, ctx, specialists, tasks) {
+async function runRound(mid, ctx, specialists, tasks, siteCtxStr = '') {
     const m = await getMeeting(mid);
     const meetingState = await meetingStateLib.getState(mid);
     const memory       = await workspaceMemory.getMemory(1);
@@ -427,7 +427,7 @@ async function runMeeting(mid, ctx) {
     const ref = await callManager(buildRefinementManagerPrompt(ctx, mtg3.messages, meetingStateLib.formatStateForPrompt(state3)), mid);
     await postAgent(mid, 'dmm', ref.reply);
     await sleep(300);
-    if (ref.specialists.length) await runRound(mid, ctx, ref.specialists, ref.tasks);
+    if (ref.specialists.length) await runRound(mid, ctx, ref.specialists, ref.tasks, siteCtxStr);
 
     // Check-in — invite user
     await setState(mid, 'speaking_dmm', { current_speaker: 'dmm' });
@@ -524,7 +524,7 @@ async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
     const namedInReply = extractNamedAgents(sarahRes.reply);
     const mergedSpecs = [...new Set([...sarahRes.specialists, ...namedInReply])];
     if (mergedSpecs.length) {
-        await runRound(mid, ctx, mergedSpecs, sarahRes.tasks);
+        await runRound(mid, ctx, mergedSpecs, sarahRes.tasks, ctx._siteContext ? formatSiteContext(ctx._siteContext) : '');
     }
     await setState(mid, 'open', { current_speaker: null });
 }
