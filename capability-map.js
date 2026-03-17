@@ -37,6 +37,8 @@ const CAPABILITY_MAP = {
         'list_builder_pages', 'get_builder_page', 'ai_builder_action', 'generate_page_layout', 'publish_builder_page', 'import_html_page',
         // Site intelligence
         'get_site_pages', 'get_site_page', 'search_site_content', 'scan_site_url',
+        // Funnel intelligence
+        'generate_funnel_blueprint', 'analyze_funnel_structure',
     ],
 
     // James — SEO Specialist
@@ -56,6 +58,8 @@ const CAPABILITY_MAP = {
         'list_builder_pages', 'get_builder_page',
         // Site intelligence
         'get_site_pages', 'get_site_page', 'search_site_content', 'scan_site_url',
+        // Funnel analysis
+        'analyze_funnel_structure',
     ],
 
     // Priya — Content Specialist
@@ -72,6 +76,8 @@ const CAPABILITY_MAP = {
         'list_builder_pages', 'get_builder_page', 'ai_builder_action', 'generate_page_layout',
         // Site intelligence — read only
         'get_site_pages', 'get_site_page', 'search_site_content',
+        // Funnel
+        'generate_funnel_blueprint', 'analyze_funnel_structure',
     ],
 
     // Marcus — Social Media Specialist

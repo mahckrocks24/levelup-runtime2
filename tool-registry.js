@@ -31,6 +31,9 @@ const SEO_TOOLS = {
         domain:           'seo',
         name:             'SERP Analysis',
         description:      'Fetch live SERP competitor data for a keyword. Returns top-ranking pages, competitor content, and a serp_run_id for use in ai_report.',
+        example:          "If user asks 'who ranks for luxury furniture Dubai' → call serp_analysis(keyword='luxury furniture Dubai').",
+        do_not_use:          'When the question is not about search rankings, or when no keyword is specified.',
+        use_when:          'The user asks about competitors, keyword rankings, or SERP features for a specific keyword.',
         wp_path:          '/lugs/v1/serp-analysis',
         method:           'POST',
         url_params:       [],
@@ -72,6 +75,9 @@ const SEO_TOOLS = {
         domain:           'seo',
         name:             'Deep Content Audit',
         description:      'Run a deep SEO audit on a specific post. Pulls GSC data, audit breakdown, competitor SERP, and generates a comprehensive AI analysis report.',
+        example:          "User says 'audit my homepage' → get post_id from list_builder_pages, then call deep_audit(post_id=X).",
+        do_not_use:          'For general questions not tied to a specific post_id. Run serp_analysis first.',
+        use_when:          'You need a full technical + content SEO audit of a specific page before making recommendations.',
         wp_path:          '/lugs/v1/deep-audit',
         method:           'POST',
         url_params:       [],
@@ -130,6 +136,9 @@ const SEO_TOOLS = {
         domain:           'seo',
         name:             'Write SEO Article',
         description:      'Generate a full SEO-optimised article and save it as a WordPress draft post. Auto-selects the best keyword from site audit data if none given. Returns the edit URL.',
+        example:          "User says 'write an article about office fit-out Dubai' → call write_article(keyword='office fit-out Dubai').",
+        do_not_use:          'For research, analysis, or improving existing content. Use improve_draft instead.',
+        use_when:          'User explicitly asks to generate a blog post or SEO article for a keyword.',
         wp_path:          '/lugs/v1/generate-seo-article',
         method:           'POST',
         url_params:       [],
@@ -324,6 +333,9 @@ const CRM_TOOLS = {
         domain:           'crm',
         name:             'Create Lead',
         description:      'Create a new lead in the CRM. Sets name, email, phone, company, source, and optionally assigns to a pipeline stage and agent.',
+        example:          "After a meeting identifies a hot prospect → call create_lead(name='...', email='...', stage='new').",
+        do_not_use:          'If the lead already exists — use update_lead or list_leads to check first.',
+        use_when:          'A new prospect has been identified and needs to be added to the CRM pipeline.',
         wp_path:          '/lucrm/v1/leads',
         method:           'POST',
         url_params:       [],
@@ -391,6 +403,9 @@ const CRM_TOOLS = {
         domain:           'crm',
         name:             'List Leads',
         description:      'List leads with optional filters by status, pipeline stage, assigned agent, or search term.',
+        example:          'Meeting on lead nurture strategy → call list_leads() to see current pipeline before recommending sequences.',
+        do_not_use:          "When you don't need lead data — it's a read operation but avoid unnecessary calls.",
+        use_when:          'To understand the current pipeline status before creating tasks or campaigns targeting leads.',
         wp_path:          '/lucrm/v1/leads',
         method:           'GET',
         url_params:       [],
@@ -683,6 +698,9 @@ const SOCIAL_TOOLS = {
         domain:           'social',
         name:             'Create Social Post',
         description:      'Create a social media post as a draft. Platform can be any string: linkedin, facebook, instagram, x, tiktok, google_business, or custom.',
+        example:          "User approves a post idea → call create_post(content='...', platform='linkedin').",
+        do_not_use:          'For general content planning discussions. Only call when ready to create an actual post.',
+        use_when:          'A specific social media post needs to be drafted and queued for scheduling.',
         wp_path:          '/lusocial/v1/posts',
         method:           'POST',
         url_params:       [],
@@ -1004,6 +1022,9 @@ const BUILDER_TOOLS = {
         domain:           'builder',
         name:             'Generate Page Layout',
         description:      'Generate a complete page layout from a natural language prompt. Returns structured builder JSON ready to save as a new page.',
+        example:          "User says 'build a landing page for our custom furniture service' → call generate_page_layout(prompt='luxury custom furniture service page UAE').",
+        do_not_use:          'For editing existing pages — use ai_builder_action instead.',
+        use_when:          'User wants a new landing page built from scratch with AI-generated layout.',
         wp_path:          '/lubld/v1/ai/generate-layout',
         method:           'POST',
         url_params:       [],
@@ -1057,6 +1078,45 @@ const BUILDER_TOOLS = {
         requires_approval: false,
         allowed_agents:   ['dmm', 'alex'],
     },
+};
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// FUNNEL INTELLIGENCE DOMAIN — Phase 8
+// ══════════════════════════════════════════════════════════════════════════
+const FUNNEL_TOOLS = {
+
+    generate_funnel_blueprint: {
+        id:'generate_funnel_blueprint', domain:'funnel', name:'Generate Funnel Blueprint',
+        description:'Build a 4-stage marketing funnel blueprint for a keyword or product. Returns stage-by-stage goals, channels, and asset recommendations.',
+        wp_path:'/lu/v1/funnel/blueprint', method:'POST', url_params:[], body_params:['keyword','product'], query_params:[],
+        params:{
+            keyword: {type:'string',required:false,description:'Target keyword e.g. "luxury office furniture UAE"'},
+            product: {type:'string',required:false,description:'Product or service name if no keyword'},
+            target_audience:{type:'string',required:false,description:'Target audience description'},
+        },
+        use_when:   'User wants to build a conversion funnel from a keyword or product campaign.',
+        do_not_use: 'For general SEO analysis — use serp_analysis instead.',
+        example:    '"Build a funnel for office fit-out clients" → generate_funnel_blueprint(keyword="office fit-out Dubai")',
+        returns:'{ blueprint: { stages[], recommended_tools[] } }',
+        requires_approval:false, allowed_agents:['dmm','priya','elena'],
+    },
+
+    analyze_funnel_structure: {
+        id:'analyze_funnel_structure', domain:'funnel', name:'Analyse Funnel Structure',
+        description:'Score a campaign or site page for funnel effectiveness. Identifies content gaps, missing CTAs, and conversion drop-off points.',
+        wp_path:'/lu/v1/funnel/analyze', method:'POST', url_params:[], body_params:['campaign_id','page_id'], query_params:[],
+        params:{
+            campaign_id:{type:'integer',required:false,description:'Campaign ID from list_campaigns to analyse'},
+            page_id:    {type:'integer',required:false,description:'Site page ID from get_site_pages to analyse'},
+        },
+        use_when:   'A campaign or landing page is underperforming and you need to identify specific gaps.',
+        do_not_use: 'Without at least one of campaign_id or page_id — both are optional but one is required.',
+        example:    '"Why is this campaign getting low clicks?" → analyze_funnel_structure(campaign_id=5)',
+        returns:'{ analysis: { gaps[], recommendations[], score } }',
+        requires_approval:false, allowed_agents:['dmm','elena','james'],
+    },
+
 };
 
 const GOVERNANCE_TOOLS = {}; // Phase 5
@@ -1121,6 +1181,7 @@ const ALL_TOOLS = Object.assign(
     CALENDAR_TOOLS,
     BUILDER_TOOLS,
     SITE_TOOLS,
+    FUNNEL_TOOLS,
     GOVERNANCE_TOOLS
 );
 
@@ -1154,50 +1215,50 @@ function buildToolPromptBlock(agentId) {
     if (!tools.length) return '';
 
     const defs = tools.map(t => {
-        const paramLines = Object.entries(t.params).map(([k, v]) =>
+        const paramLines = Object.entries(t.params || {}).map(([k, v]) =>
             `      ${k} (${v.type}${v.required ? ', REQUIRED' : ', optional'}): ${v.description}`
         ).join('\n');
         const approvalNote = t.requires_approval
-            ? '\n  ⚠️  REQUIRES HUMAN APPROVAL before execution.'
-            : '\n  ✓  Executes immediately.';
-        return [
+            ? '  \u26a0\ufe0f  REQUIRES HUMAN APPROVAL before execution.'
+            : '  \u2713  Executes immediately.';
+
+        const lines = [
             `TOOL: ${t.id}`,
-            `Name: ${t.name}`,
-            `Description: ${t.description}`,
-            paramLines ? `Parameters:\n${paramLines}` : 'Parameters: none',
-            `Returns: ${t.returns}`,
-            approvalNote,
-        ].join('\n');
-    }).join('\n\n');
+            `PURPOSE: ${t.description}`,
+        ];
+        if (t.use_when)     lines.push(`USE WHEN: ${t.use_when}`);
+        if (t.do_not_use)   lines.push(`DO NOT USE WHEN: ${t.do_not_use}`);
+        if (t.example)      lines.push(`EXAMPLE: ${t.example}`);
+        if (paramLines)     lines.push(`PARAMETERS:\n${paramLines}`);
+        if (t.returns)      lines.push(`RETURNS: ${t.returns}`);
+        lines.push(approvalNote);
 
-    return `
-═══════════════════════════════════════════════
-REAL TOOLS AVAILABLE TO YOU
-═══════════════════════════════════════════════
-You have access to the following tools that return REAL data from the client's live systems.
-When a tool would meaningfully improve your response with real data, use it. Do NOT hallucinate numbers or results.
+        return lines.join('\n');
+    }).join('\n\n---\n\n');
 
-${defs}
-
-═══════════════════════════════════════════════
-HOW TO CALL A TOOL
-═══════════════════════════════════════════════
-Output ONLY this block on that turn (nothing else):
-
-<tool_call>
-{
-  "tool": "tool_id_here",
-  "params": { "param_name": "value" }
-}
-</tool_call>
-
-Rules:
-- Call ONE tool at a time
-- Only call when real data adds genuine value to your response
-- After the result is returned, use it in your final response
-- For tools marked REQUIRES HUMAN APPROVAL: propose the action, then call the tool — human approves/rejects before it executes
-- Never fabricate tool results. If a tool fails, acknowledge it and continue with best available knowledge
-`;
+    return [
+        '',
+        '\u2550\u2550\u2550 TOOLS AVAILABLE TO YOU (real data \u2014 use with discipline) \u2550\u2550\u2550',
+        'These tools return LIVE data from the client systems.',
+        'DO NOT hallucinate results. Call the tool, read the result, then reason from it.',
+        'DO NOT call tools when you already have the information in context.',
+        '',
+        defs,
+        '',
+        '\u2550\u2550\u2550 HOW TO CALL A TOOL (exact format) \u2550\u2550\u2550',
+        '<tool_call>',
+        '{',
+        '  "tool": "tool_id_here",',
+        '  "params": { "param_name": "value" }',
+        '}',
+        '</tool_call>',
+        '',
+        'DISCIPLINE:',
+        '1. One tool per turn. Wait for result before calling another.',
+        '2. Only call when real data materially improves your answer.',
+        '3. Interpret results \u2014 never paste raw JSON.',
+        '4. Honour USE WHEN / DO NOT USE WHEN guidance for each tool.',
+    ].join('\n');
 }
 
 function getStats() {

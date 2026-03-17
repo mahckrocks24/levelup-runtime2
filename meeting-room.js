@@ -7,6 +7,10 @@ const { callLLM }                  = require('./llm');
 const meetingStateLib              = require('./meeting-state');
 const workspaceMemory              = require('./workspace-memory');
 const { researchMemoryRead, researchMemoryAppend, formatResearchForPrompt } = require('./lu-memory');
+const { rankMemories, formatRankedMemory } = require('./memory-ranking');
+const { fetchSiteContext, formatSiteContext, formatSiteSummaryBrief } = require('./site-context');
+const { readInsights, refreshInsights, formatCampaignInsights } = require('./campaign-learning');
+const { generateInsights, readInsights: readGrowthInsights, formatGrowthInsights } = require('./growth-insights');
 const { getWorkspaceContext, buildContextPrompt } = require('./lu-context');
 const { parseToolCall, executeTool, formatToolResult } = require('./tool-executor');
 const {
@@ -97,7 +101,7 @@ async function callManager(prompt, mid) {
 }
 
 // ── LLM: Specialist call (with deliberation + tool execution) ─────────────
-async function callSpecialist(agentId, ctx, history, task, mid, meetingState, memory) {
+async function callSpecialist(agentId, ctx, history, task, mid, meetingState, memory, siteCtxStr = '') {
     const m = await getMeeting(mid);
     const agentResponses = (m?.messages || []).filter(x => x.agent_id === agentId).length;
 
@@ -118,7 +122,8 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
             // ── Governance: inject agent research memory ──────────────────
             const research    = await researchMemoryRead(1, agentId).catch(() => null);
             const researchStr = formatResearchForPrompt(agentId, research);
-            const prompt      = buildSpecialistPrompt(agentId, ctx, history, task, stateStr, memStr, deliberation, researchStr);
+            const combinedResearch = [researchStr, rankedMemStr].filter(Boolean).join('\n\n');
+    const prompt      = buildSpecialistPrompt(agentId, ctx, history, task, stateStr, memStr, deliberation, combinedResearch, siteCtxStr);
 
             const uMsg = attempt === 1
                 ? 'Give your expert response. If you need real data, use a tool.'
@@ -296,7 +301,7 @@ async function runRound(mid, ctx, specialists, tasks) {
         const task  = tasks?.[agentId] || 'Give your expert perspective on what has been discussed so far.';
         await setState(mid, `speaking_${agentId}`, { current_speaker: agentId });
         const fresh = await getMeeting(mid);
-        const content = await callSpecialist(agentId, ctx, fresh.messages, task, mid, meetingState, memory);
+        const content = await callSpecialist(agentId, ctx, fresh.messages, task, mid, meetingState, memory, siteCtxStr);
         if (content) {
             await postAgent(mid, agentId, content);
             // ── Governance: store key research findings in agent memory ───
@@ -328,8 +333,17 @@ async function startMeeting(mid, ctx) {
     const wp_secret = process.env.WP_SECRET || '';
 
     let enrichedCtx = { ...ctx };
+    // Phase 3: Fetch site content summary alongside workspace context
+    const siteCtxPromise     = fetchSiteContext(wp_url, wp_secret).catch(() => null);
+    // Phase 6+9: trigger insights refresh (non-blocking background)
+    refreshInsights(wp_url, wp_secret).catch(() => {});
+    generateInsights(wp_url, wp_secret).catch(() => {});
     try {
-        const wpCtx = await getWorkspaceContext(wp_url, wp_secret);
+        const [wpCtx, siteCtx] = await Promise.all([
+            getWorkspaceContext(wp_url, wp_secret),
+            siteCtxPromise,
+        ]);
+        enrichedCtx._siteContext = siteCtx;  // stored for prompt injection
         // WP-supplied values take priority (freshest source).
         // Merge Redis-learned enrichments for fields not already set.
         enrichedCtx = {
@@ -368,9 +382,26 @@ async function runMeeting(mid, ctx) {
     const memory = await workspaceMemory.getMemory(1);
     const memStr = workspaceMemory.formatMemoryForPrompt(memory);
 
+    // Phase 3: Format site context
+    const siteCtxStr = ctx._siteContext
+        ? formatSiteContext(ctx._siteContext)
+        : formatSiteSummaryBrief(null);
+
+    // Phase 6+9: Read campaign and growth insights from memory
+    const [campaignInsights, growthInsights] = await Promise.allSettled([
+        readInsights(),
+        readGrowthInsights(),
+    ]);
+    const campaignInsightsStr = formatCampaignInsights(
+        campaignInsights.status === 'fulfilled' ? campaignInsights.value : null
+    );
+    const growthInsightsStr   = formatGrowthInsights(
+        growthInsights.status  === 'fulfilled' ? growthInsights.value  : null
+    );
+
     // Briefing
     await setState(mid, 'speaking_dmm', { phase: 'briefing', current_speaker: 'dmm' });
-    const briefing = await callManager(buildBriefingPrompt(ctx, memStr), mid);
+    const briefing = await callManager(buildBriefingPrompt(ctx, memStr, siteCtxStr, campaignInsightsStr, growthInsightsStr), mid);
     await postAgent(mid, 'dmm', briefing.reply, 'opening');
     await markSpoken(mid, 'dmm');
     await sleep(350);
@@ -378,7 +409,7 @@ async function runMeeting(mid, ctx) {
     // Idea round
     await setState(mid, 'idea_round', { phase: 'idea_round', current_speaker: null });
     const ideaSpec = briefing.specialists.length ? briefing.specialists : ['james', 'priya', 'elena'];
-    await runRound(mid, ctx, ideaSpec, briefing.tasks);
+    await runRound(mid, ctx, ideaSpec, briefing.tasks, siteCtxStr);
 
     // Discussion round — Sarah drives debate
     await setState(mid, 'speaking_dmm', { phase: 'discussion_round', current_speaker: 'dmm' });
@@ -387,7 +418,7 @@ async function runMeeting(mid, ctx) {
     const disc = await callManager(buildDiscussionManagerPrompt(ctx, mtg2.messages, meetingStateLib.formatStateForPrompt(state2), memStr), mid);
     await postAgent(mid, 'dmm', disc.reply);
     await sleep(300);
-    if (disc.specialists.length) await runRound(mid, ctx, disc.specialists, disc.tasks);
+    if (disc.specialists.length) await runRound(mid, ctx, disc.specialists, disc.tasks, siteCtxStr);
 
     // Refinement round — pressure-test
     await setState(mid, 'speaking_dmm', { phase: 'refinement_round', current_speaker: 'dmm' });
@@ -465,7 +496,7 @@ async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
         for (const agentId of spoken.filter(id => id !== 'dmm')) {
             await setState(mid, `speaking_${agentId}`, { current_speaker: agentId });
             const fresh = await getMeeting(mid);
-            const resp  = await callSpecialist(agentId, ctx, [...histWithUser, ...fresh.messages.slice(histWithUser.length - 1)], content, mid, meetingState, memory);
+            const resp  = await callSpecialist(agentId, ctx, [...histWithUser, ...fresh.messages.slice(histWithUser.length - 1)], content, mid, meetingState, memory, '');
             if (resp) { await postAgent(mid, agentId, resp); await sleep(300); }
         }
         await setState(mid, 'open', { current_speaker: null });
@@ -477,7 +508,7 @@ async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
         for (const agentId of mention.agents) {
             await setState(mid, `speaking_${agentId}`, { current_speaker: agentId });
             await markSpoken(mid, agentId);
-            const resp = await callSpecialist(agentId, ctx, histWithUser, content, mid, meetingState, memory);
+            const resp = await callSpecialist(agentId, ctx, histWithUser, content, mid, meetingState, memory, '');
             if (resp) { await postAgent(mid, agentId, resp, 'message', { direct_reply_to: 'user' }); await sleep(300); }
         }
         await setState(mid, 'open', { current_speaker: null });

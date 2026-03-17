@@ -1,6 +1,7 @@
 'use strict';
 
-const { buildToolPromptBlock } = require('./tool-registry');
+const { buildToolPromptBlock }                          = require('./tool-registry');
+const { formatSiteContext, formatSiteSummaryBrief }     = require('./site-context');
 
 /**
  * LevelUp Meeting Prompt Architecture — meeting-prompts.js
@@ -155,7 +156,7 @@ TASKS: {"james":"Run SERP analysis for primary keyword cluster","priya":"Identif
 //    Called once at the start of runMeeting().
 //    Returns: { reply, specialists[], tasks{} }  (via parseManagerResponse)
 // ─────────────────────────────────────────────────────────────────────────
-function buildBriefingPrompt(ctx, memStr) {
+function buildBriefingPrompt(ctx, memStr, siteCtxStr = '', campaignInsightsStr = '', growthInsightsStr = '') {
     const internal   = isInternal(ctx);
     const roster     = getTeamRoster(ctx?.participants);
     const ctxBlock   = fmtCtx(ctx);
@@ -200,7 +201,10 @@ ${ctxBlock || '(EMPTY — workspace profile not configured. Invoke CONTEXT GUARD
 WORKSPACE MEMORY:
 ${memStr || '(No prior memory — this may be the first meeting.)'}
 
-TEAM AVAILABLE FOR THIS MEETING:
+WEBSITE CONTENT:
+${siteCtxStr || '(No website pages scanned yet — agents can call scan_site_url or get_site_pages to read the client website.)'}
+
+${campaignInsightsStr ? campaignInsightsStr + '\n\n' : ''}${growthInsightsStr ? growthInsightsStr + '\n\n' : ''}TEAM AVAILABLE FOR THIS MEETING:
 ${roster}
 
 ${contextGuard}
@@ -315,7 +319,7 @@ ${HARD_RAILS}`;
 //    A named specialist delivers their expert analysis.
 //    Supports both modes — adjusts tone based on ctx.mode.
 // ─────────────────────────────────────────────────────────────────────────
-function buildSpecialistPrompt(agentId, ctx, messages, task, stateStr, memStr, deliberation, researchStr = '') {
+function buildSpecialistPrompt(agentId, ctx, messages, task, stateStr, memStr, deliberation, researchStr = '', siteCtxStr = '') {
     const agents   = getAgents();
     const agent    = agents[agentId] || { name: agentId, title: 'Specialist' };
     const internal = isInternal(ctx);
@@ -347,7 +351,7 @@ ${deliberationBlock}
 DISCUSSION SO FAR:
 ${history}
 
-${researchStr ? researchStr + '\n\n' : ''}YOUR TASK FOR THIS TURN:
+${researchStr ? researchStr + '\n\n' : ''}${siteCtxStr ? 'WEBSITE CONTENT:\n' + siteCtxStr + '\n\n' : ''}YOUR TASK FOR THIS TURN:
 ${task || 'Give your expert perspective on the topic being discussed.'}
 
 TOOL-FIRST INSTRUCTION: Before presenting conclusions, state what source your analysis is based on.

@@ -156,9 +156,26 @@ function normalisePlan(raw_plan, goal_id, goal) {
 
     // Sanitise tools — keep only tools this agent is allowed to use
     const all_allowed = [...roster.tools, ...any];
-    const tools = (Array.isArray(t.tools) ? t.tools : [])
+    let tools = (Array.isArray(t.tools) ? t.tools : [])
       .map(String)
       .filter(tool => all_allowed.includes(tool));
+
+    // Phase 5: Avoid tools with < 40% success rate from experience data
+    if (normalisePlan._toolStats) {
+      const failingTools = tools.filter(toolId => {
+        const stat = normalisePlan._toolStats[toolId];
+        if (!stat) return false;
+        const total = stat.call_count || 0;
+        if (total < 3) return false; // not enough data to flag
+        const successRate = total > 0 ? (total - (stat.error_count || 0)) / total : 1;
+        if (successRate < 0.4) {
+          console.log(`[planner] Avoiding tool ${toolId} — success rate ${Math.round(successRate*100)}% (< 40%)`);
+          return true;
+        }
+        return false;
+      });
+      tools = tools.filter(t => !failingTools.includes(t));
+    }
 
     // Fallback: if no valid tools, use agent's first tool
     const final_tools = tools.length ? tools : [roster.tools[0]];
@@ -236,6 +253,19 @@ async function createPlan({ goal_id, goal, context = {}, extra_ctx = '' }) {
 
   try {
     const raw = await callDeepSeek(system_prompt, user_message);
+    // Phase 5: Attach tool stats to normalisePlan for reliability filtering
+    try {
+      const statsRes = await fetch(`${wp_url}/wp-json/lu/v1/tools/status`, {
+        headers:{ 'X-LU-Secret': wp_secret, Accept:'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        normalisePlan._toolStats = statsData.stats || {};
+        console.log('[planner] Tool stats loaded for reliability check');
+      }
+    } catch(_) { normalisePlan._toolStats = {}; }
+
     let tasks = normalisePlan(raw, goal_id, goal);
     if (!tasks || !tasks.length) {
       console.warn('[planner] LLM returned empty plan — using scaffold');

@@ -34,6 +34,7 @@ const { sendInternalMessage,
         recordHandoff,
         getCollaborationSummary }        = require('./lu-collaborator');
 const { refineSingleTask }               = require('./lu-planner');
+const { rankMemories, formatRankedMemory }  = require('./memory-ranking');
 const { emit }                           = require('./lu-event-bus');   // Phase 8
 
 const CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || '3', 10);
@@ -54,6 +55,7 @@ async function synthesize(job_data, tool_results, context, collab_summary) {
       task_title:    job_data.title,
       tool_results,
       context_prompt,
+      memory_insights: rankedMemStr || null,
       collab_summary: collab_summary || null,
     });
     const res = await fetch(synthesisUrl, {
@@ -101,12 +103,16 @@ async function processJob(job) {
     .catch(() => {});
 
   // ── Phase 7: Agent "thoughts" — log reasoning before execution ───
+  // Phase 4: rank memories by relevance to this task
+  const rankedMemories = rankMemories(title, agent_id, tools, memory.recent_tasks || []);
+  const rankedMemStr   = formatRankedMemory(rankedMemories);
+
   const agent_thoughts = [
     `I am ${agent_id}. Task: "${title}".`,
     tools.length ? `I will use: ${tools.join(', ')}.` : '',
     context.brand_voice ? `Brand voice: ${context.brand_voice}.` : '',
-    memory.recent_tasks?.length
-      ? `I recall ${memory.recent_tasks.length} relevant past tasks.` : '',
+    rankedMemories.length
+      ? `I have ${rankedMemories.length} relevant past insights (ranked by relevance).` : '',
   ].filter(Boolean).join(' ');
 
   await traceUpdate(task_id, { agent_thoughts }).catch(() => {});

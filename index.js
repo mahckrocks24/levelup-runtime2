@@ -324,6 +324,7 @@ app.post('/internal/assistant', requireSecret, async (req, res) => {
     const { message, context={}, conversation_id='default', agent_id='dmm' } = req.body;
     if (!message?.trim()) return res.status(400).json({ error:'message required' });
 
+    const { routeIntent, formatToolSuggestions } = require('./assistant-tool-router');
     const { buildAssistantPrompt, buildAgentConsultPrompt, AGENTS, TOKENS } = require('./agents');
     const { callLLM }   = require('./llm');
     const { getHistory, appendMessage } = require('./conversation');
@@ -348,8 +349,82 @@ app.post('/internal/assistant', requireSecret, async (req, res) => {
         };
         const memoryCtx = ltMemory.status === 'fulfilled' ? ltMemory.value : {};
 
+        // ── Phase 2: Pre-reasoning tool suggestion ─────────────────────────
+        const suggestions    = routeIntent(message, agent_id);
+        const toolSuggestion = formatToolSuggestions(suggestions);
+
+        // ── Phase 7: Strategic mode — complex multi-domain queries trigger agent consultation ──
+        const STRATEGIC_PATTERNS = [
+            /how (can|do|should) (i|we).{10,}(seo|content|campaign|crm|leads|social|ads|funnel)/i,
+            /improve (our|my).{5,}(seo|marketing|content|strategy|funnel|ads)/i,
+            /full.{0,10}(strategy|plan|roadmap|audit)/i,
+            /what.{0,15}(should we|should i|recommend).{5,}(marketing|seo|content|campaign)/i,
+            /help.{0,10}(grow|scale|increase|improve).{5,}(traffic|leads|sales|revenue|rankings)/i,
+        ];
+        const isStrategic = STRATEGIC_PATTERNS.some(p => p.test(message));
+
+        if (isStrategic) {
+            console.log('[ASSISTANT] Strategic mode triggered — consulting specialists');
+            const { buildAgentConsultPrompt: bac } = require('./agents');
+            const { getAgentsSync } = require('./agents');
+            const agentMap = getAgentsSync();
+
+            // Determine which specialists to consult based on detected intent
+            const consultAgents = suggestions.tools.reduce((acc, tool) => {
+                const domainAgents = {
+                    serp_analysis: 'james', deep_audit: 'james', write_article: 'priya',
+                    create_post: 'marcus', create_lead: 'elena', create_campaign: 'dmm',
+                    get_site_pages: 'alex', scan_site_url: 'alex', generate_page_layout: 'dmm',
+                };
+                const ag = domainAgents[tool];
+                if (ag && !acc.includes(ag)) acc.push(ag);
+                return acc;
+            }, []);
+            const consultList = consultAgents.length ? consultAgents.slice(0, 3) : ['james', 'priya', 'elena'];
+
+            // Parallel specialist consultations (30s each, non-blocking failures)
+            const specialistResponses = await Promise.allSettled(
+                consultList.map(async agId => {
+                    const persona  = bac(agId, message, workspaceCtx);
+                    const r = await callLLM({
+                        messages: [{ role:'system', content: persona }, { role:'user', content: message }],
+                        max_tokens: 400, temperature: 0.65,
+                    });
+                    const ag = agentMap[agId] || { name: agId };
+                    return { agentId: agId, name: ag.name, response: r.content?.trim() || '' };
+                })
+            );
+
+            const contributions = specialistResponses
+                .filter(r => r.status === 'fulfilled' && r.value.response)
+                .map(r => `[${r.value.name}]: ${r.value.response}`);
+
+            if (contributions.length) {
+                // Synthesise into a unified strategic response
+                const synthPrompt = bac('dmm', message, workspaceCtx);
+                const synthMessages = [
+                    { role:'system', content: synthPrompt },
+                    { role:'user', content: \`The team has weighed in on: "\${message}"
+
+Team inputs:
+\${contributions.join('\n\n')}
+
+Synthesise into one clear strategic recommendation with specific action steps.\` },
+                ];
+                const synthR = await callLLM({ messages: synthMessages, max_tokens: 800, temperature: 0.5 });
+                const reply  = synthR.content?.trim() || contributions.join('\n\n');
+                await appendMessage(1, conversation_id, 'user', message);
+                await appendMessage(1, conversation_id, 'assistant', reply);
+                return res.json({
+                    response:        reply,
+                    strategic_mode:  true,
+                    agents_consulted: consultList,
+                });
+            }
+        }
+
         // ── Build upgraded prompt ───────────────────────────────────────────
-        const systemPrompt = buildAssistantPrompt(message, workspaceCtx, memoryCtx);
+        const systemPrompt = buildAssistantPrompt(message, workspaceCtx, memoryCtx, toolSuggestion);
 
         const messages = [
             { role:'system', content: systemPrompt },
@@ -411,6 +486,43 @@ app.post('/internal/assistant', requireSecret, async (req, res) => {
     } catch(e) {
         console.error('[ASSISTANT]', e.message);
         res.status(500).json({ error:e.message, response:"I'm having a technical issue. Please try again." });
+    }
+});
+
+// ── Phase 9: Growth Insights endpoints ───────────────────────────────────────
+const { generateInsights, readInsights: readGrowthInsights, formatGrowthInsights } = require('./growth-insights');
+const { refreshInsights: refreshCampaignInsights, readInsights: readCampaignInsights } = require('./campaign-learning');
+
+app.post('/internal/insights/refresh', requireSecret, async (req, res) => {
+    const wp_url    = process.env.WP_URL || '';
+    const wp_secret = process.env.WP_SECRET || '';
+    try {
+        const [growth, campaign] = await Promise.allSettled([
+            generateInsights(wp_url, wp_secret),
+            refreshCampaignInsights(wp_url, wp_secret),
+        ]);
+        res.json({
+            success:  true,
+            growth:   growth.status  === 'fulfilled' ? growth.value  : null,
+            campaign: campaign.status === 'fulfilled' ? campaign.value : null,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/internal/insights/current', requireSecret, async (req, res) => {
+    try {
+        const [growth, campaign] = await Promise.allSettled([
+            readGrowthInsights(),
+            readCampaignInsights(),
+        ]);
+        res.json({
+            growth:   growth.status  === 'fulfilled' ? growth.value  : null,
+            campaign: campaign.status === 'fulfilled' ? campaign.value : null,
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 

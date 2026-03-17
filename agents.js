@@ -139,7 +139,7 @@ HARD RULES: All agents always present. Never claim someone is unavailable. When 
 const TEAM_ROSTER = getTeamRoster();
 
 // ── buildAssistantPrompt (unchanged from Sprint F) ─────────────────────────
-function buildAssistantPrompt(message, context = {}, memory = {}) {
+function buildAssistantPrompt(message, context = {}, memory = {}, toolSuggestion = '') {
     const agents    = getAgentsSync();
     const agentList = Object.values(agents)
         .map(a => `  ${a.id || a.agent_id} — ${a.name} (${a.title})`)
