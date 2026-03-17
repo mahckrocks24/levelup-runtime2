@@ -559,17 +559,44 @@ async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
         return;
     }
 
-    // Normal — Sarah responds + may delegate
-    await setState(mid, 'speaking_dmm', { current_speaker: 'dmm' });
-    const sarahRes = await callManager(buildUserTurnPrompt(ctx, histWithUser, stateStr, memStr), mid);
-    if (sarahRes.reply) { await postAgent(mid, 'dmm', sarahRes.reply); await sleep(300); }
+    // Normal user message (no @mention) — route to relevant specialists first.
+    // Sarah only steps in if: no specialists responded, OR she has genuine synthesis to add.
+    // This prevents Sarah from parroting the user's message back as instructions.
 
-    // Routing fix: if Sarah named an agent in her reply but forgot to add them to specialists, add them
-    const namedInReply = extractNamedAgents(sarahRes.reply);
-    const mergedSpecs = [...new Set([...sarahRes.specialists, ...namedInReply])];
+    // Step 1: Ask Sarah to plan the response (silent — not posted to chat)
+    const sarahPlan = await callManager(buildUserTurnPrompt(ctx, histWithUser, stateStr, memStr), mid);
+    
+    // Step 2: Run specialists Sarah nominated
+    const namedInReply = extractNamedAgents(sarahPlan.reply);
+    const mergedSpecs  = [...new Set([...sarahPlan.specialists, ...namedInReply])];
+    let specialistPosted = 0;
+    
     if (mergedSpecs.length) {
-        await runRound(mid, ctx, mergedSpecs, sarahRes.tasks, ctx._siteContext ? formatSiteContext(ctx._siteContext) : '');
+        const specialistResults = [];
+        for (const agentId of mergedSpecs) {
+            await setState(mid, `speaking_${agentId}`, { current_speaker: agentId });
+            await markSpoken(mid, agentId);
+            const resp = await callSpecialist(agentId, ctx, histWithUser, sarahPlan.tasks?.[agentId] || sanitisedContent, mid, meetingState, memory, ctx._siteContext ? formatSiteContext(ctx._siteContext) : '');
+            if (resp) {
+                await postAgent(mid, agentId, resp, 'message', { direct_reply_to: 'user' });
+                await sleep(300);
+                specialistPosted++;
+                specialistResults.push(resp);
+            }
+        }
     }
+
+    // Step 3: Sarah only posts if she has real synthesis OR no specialist responded
+    // She does NOT post if her reply just repeats the user's instruction back
+    const isParroting = sarahPlan.reply && sanitisedContent.length > 0 &&
+        sarahPlan.reply.toLowerCase().includes(sanitisedContent.toLowerCase().slice(0, 20).trim());
+    
+    if (!isParroting && sarahPlan.reply && (specialistPosted === 0 || sarahPlan.specialists.length === 0)) {
+        await setState(mid, 'speaking_dmm', { current_speaker: 'dmm' });
+        await postAgent(mid, 'dmm', sarahPlan.reply);
+        await sleep(300);
+    }
+
     await setState(mid, 'open', { current_speaker: null });
 }
 

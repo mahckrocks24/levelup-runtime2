@@ -403,10 +403,11 @@ MEETING HISTORY (including the client's latest message):
 ${history}
 
 YOUR JOB:
-1. Address the client's message directly — don't ignore it and keep going.
-2. If it's a question you can answer immediately, do so.
-3. If it needs specialist input, say who you're routing to and why.
-4. If it changes the meeting direction, acknowledge that and reset the focus.
+1. Silently plan: which specialist should respond to this message and what should they do?
+2. Output the MANAGER_FORMAT routing JSON — specialists will respond directly to the client.
+3. Only include your own reply text if you have genuine NEW information to add that no specialist can provide.
+4. NEVER parrot the client's words back as instructions. NEVER say "Client wants X" or repeat their question.
+5. If the client is asking a question within a specialist's domain — route it silently, do not speak.
 
 ${MANAGER_FORMAT}
 ${HARD_RAILS}`;
@@ -701,16 +702,18 @@ function parseMentions(content) {
  * Returns true if content is too similar to recent messages in history.
  * Uses word-overlap ratio — fast, no external deps.
  */
-function isDuplicate(content, messages, threshold = 0.90) {
+function isDuplicate(content, messages, threshold = 0.82) {
     if (!content || !messages?.length) return false;
     const incoming = new Set(content.toLowerCase().split(/\W+/).filter(w => w.length > 4));
-    if (incoming.size < 5) return false; // too short to meaningfully compare
+    if (incoming.size < 8) return false; // must have 8+ meaningful words to compare
 
-    const recent = messages.slice(-6);
+    // Only check the last 4 messages (not 6) and skip user messages
+    // This prevents agents from being blocked when a user repeats a short question
+    const recent = messages.slice(-4);
     for (const msg of recent) {
         if (!msg.content || msg.role === 'user') continue;
         const existing = new Set(msg.content.toLowerCase().split(/\W+/).filter(w => w.length > 4));
-        if (existing.size < 5) continue;
+        if (existing.size < 8) continue;
 
         let overlap = 0;
         for (const word of incoming) { if (existing.has(word)) overlap++; }
