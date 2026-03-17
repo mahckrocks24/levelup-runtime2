@@ -30,17 +30,33 @@ const { formatSiteContext, formatSiteSummaryBrief }     = require('./site-contex
  */
 
 // ── Lazy agent ref — avoids circular require ──────────────────────────────
+// ── User address helper — never call the user "Client" ───────────────────────
+// Uses the name from workspace context, falls back to "Boss" (platform default)
+function getUserAddress(ctx) {
+    return ctx?.user_name || ctx?.user || 'Boss';
+}
+
 function getAgents() {
     return require('./agents').getAgentsSync();
 }
 function getTeamRoster(participants) {
     const a = getAgents();
     const ids = participants?.length ? participants : Object.keys(a);
+    // Domain ownership map — authoritative so agents NEVER confuse each other's remit
+    const DOMAIN_OWNERSHIP = {
+        dmm:    'Strategy, campaign planning, meeting facilitation, client communication',
+        james:  'SEO ONLY — keyword research, SERP analysis, rankings, on-page optimisation',
+        priya:  'Content ONLY — copywriting, content briefs, editorial calendar, blog strategy',
+        marcus: 'Social media ONLY — Instagram, LinkedIn, TikTok, posting schedules, ads',
+        elena:  'CRM & leads ONLY — pipeline stages, lead scoring, email nurture, conversion',
+        alex:   'Technical SEO ONLY — site speed, Core Web Vitals, schema, crawl issues',
+    };
     return ids
         .filter(id => a[id])
         .map(id => {
             const ag = a[id];
-            return `- ${ag.name} (${ag.title || ag.role || id})`;
+            const domain = DOMAIN_OWNERSHIP[id] || ag.title || ag.role || id;
+            return `- ${ag.name} (${ag.title || id}): ${domain}`;
         })
         .join('\n');
 }
@@ -112,6 +128,10 @@ HARD RULES (apply always, no exceptions):
 - When you cite data, be specific (percentages, volumes, timeframes).
 - If you disagree, say so clearly and explain why.
 - Keep your response under 200 words unless the topic demands more.
+- TEAM ROLES ARE FIXED: James = SEO. Priya = Content. Marcus = Social. Elena = CRM. Alex = Technical SEO.
+  Never confuse or misattribute a team member's role. If unsure who handles something, check the team list above.
+- TOOL FAILURES: Report once with one sentence max. Then give your expert answer. Never block on missing data.
+- OFF-TOPIC QUESTIONS: If the user asks something completely unrelated to the meeting or your domain (weather, personal questions, jokes), do NOT pretend to answer it through your specialist lens. Acknowledge it briefly and redirect to the meeting focus. Do not fabricate relevance.
 
 GOVERNANCE RULE — BUSINESS LOCK (CRITICAL, non-negotiable):
 You are working exclusively for the specific business defined in WORKSPACE CONTEXT above.
@@ -291,13 +311,13 @@ ${HARD_RAILS}`;
 //    Sarah checks in with the user at the end of the structured rounds.
 //    Only called in user-facing meetings. In internal mode, skip to synthesis.
 // ─────────────────────────────────────────────────────────────────────────
-function buildCheckinPrompt(messages, stateStr) {
+function buildCheckinPrompt(messages, stateStr, ctx = null) {
     const history = fmtHistory(messages, 15);
 
     return `You are ${getDmmName()}, ${getDmmTitle()} at LevelUp Growth.
-The structured analysis rounds are complete. You are now checking in with the client before writing the action plan.
+The structured analysis rounds are complete. You are now checking in with ${getUserAddress(ctx)} before writing the action plan.
 
-USER-FACING MODE: The client is present and may want to redirect, add context, or confirm direction.
+USER-FACING MODE: ${getUserAddress(ctx)} is present and may want to redirect, add context, or confirm direction.
 
 ${stateStr || ''}
 
@@ -307,7 +327,7 @@ ${history}
 YOUR JOB NOW:
 Deliver a 3–4 sentence summary of where the team has landed.
 Then ask one clear, specific question to confirm the client's priorities before you write the final plan.
-Do not summarise every point — hit the headline finding and the key decision that needs the client's input.
+Do not summarise every point — hit the headline finding and the key decision that needs ${getUserAddress(ctx)}'s input.
 
 Respond as a single paragraph followed by a direct question.
 Do NOT use the SPECIALISTS/TASKS format here — this is a direct conversation with the user.
@@ -332,11 +352,16 @@ function buildSpecialistPrompt(agentId, ctx, messages, task, stateStr, memStr, d
 
     const toneBlock = internal
         ? `${INTERNAL_RAILS}\nYou are speaking to peer agents — skip preamble, go straight to your analysis.`
-        : `${USER_RAILS}\nBriefly explain your reasoning so the client follows your logic.`;
+        : `${USER_RAILS}\nBriefly explain your reasoning so ${getUserAddress(ctx)} follows your logic.`;
 
+    // Build peer roster (excluding self) so agent knows each colleague's exact domain
+    const peerRoster = getTeamRoster([]);
     return `You are ${agent.name}, ${agent.title || 'specialist'} at LevelUp Growth.
 
 ${toneBlock}
+
+YOUR TEAM (for reference and handoffs — do not duplicate their work):
+${peerRoster}
 
 WORKSPACE CONTEXT:
 ${ctxBlock}
@@ -356,17 +381,25 @@ ${task || 'Give your expert perspective on the topic being discussed.'}
 
 TOOL PRIORITY INSTRUCTION:
 1. ALWAYS attempt to use a relevant tool first to ground your answer in real data.
-2. If the tool returns an error or no data — do NOT repeat the error or dwell on it.
-   Immediately pivot: give your expert recommendation based on industry knowledge,
-   frameworks, and the business context above. One sentence max acknowledging the gap,
-   then deliver the answer as if you had the data.
-3. If the user says tools are not working — skip the tool call entirely and go straight
-   to expert reasoning. Never ask for data that cannot be retrieved.
-4. Your job is always to leave the team with a concrete recommendation, regardless of tool status.
+2. If the tool returns an error or zero data:
+   - Write ONE sentence max: "System data unavailable — working from industry benchmarks."
+   - Then immediately deliver your full expert analysis as if you had the data.
+   - Do NOT mention the tool error again. Do NOT ask ${getUserAddress(ctx)} to provide the data.
+   - Do NOT say "I cannot proceed without X." You CAN and MUST proceed.
+3. If client says tools aren't working — skip tool entirely, go straight to expert answer.
+4. NEVER report a tool failure more than once. NEVER let a tool error stop your analysis.
 
 CONTEXT REMINDER: You are advising the specific business above. Every keyword, tactic, and
 recommendation must be relevant to their actual industry, services, and market.
 Using examples from unrelated industries is a critical governance violation.
+
+TOOL SCOPE (critical — do not misuse):
+- Tools access the CLIENT'S OWN platform data: their posts, their leads, their campaigns, their site.
+- Tools do NOT access public social media profiles, competitor sites, or external search engines.
+- For competitor research, public Facebook pages, external brand searches → USE YOUR TRAINING KNOWLEDGE.
+  You know what Dubai interior design companies do on social media. Use that knowledge directly.
+- Never tell the client "I cannot find your Facebook page" via tools — their page is public, you know
+  how to reason about it. Use web knowledge, not tools, for anything publicly visible.
 
 ${buildToolPromptBlockWithDiscovery(agentId)}
 
@@ -386,10 +419,14 @@ function buildUserTurnPrompt(ctx, messages, stateStr, memStr) {
     const history  = fmtHistory(messages, 20);
     const ctxBlock = fmtCtx(ctx);
 
+    const fullRoster = getTeamRoster([]);
     return `You are ${getDmmName()}, ${getDmmTitle()} at LevelUp Growth.
-The client has sent a message during the live meeting. You are the first to respond.
+The client has sent a message during the live meeting.
 
-USER-FACING MODE: The client is active. Read their message carefully — they may be redirecting the meeting, asking a question, or adding new information.
+USER-FACING MODE: ${getUserAddress(ctx)} is active. Read their message carefully.
+
+YOUR TEAM (memorise these — never confuse their domains):
+${fullRoster}
 
 WORKSPACE CONTEXT:
 ${ctxBlock}
@@ -399,15 +436,15 @@ ${memStr || '(None.)'}
 
 ${stateStr || ''}
 
-MEETING HISTORY (including the client's latest message):
+MEETING HISTORY (including ${getUserAddress(ctx)}'s latest message):
 ${history}
 
 YOUR JOB:
-1. Silently plan: which specialist should respond to this message and what should they do?
-2. Output the MANAGER_FORMAT routing JSON — specialists will respond directly to the client.
-3. Only include your own reply text if you have genuine NEW information to add that no specialist can provide.
-4. NEVER parrot the client's words back as instructions. NEVER say "Client wants X" or repeat their question.
-5. If the client is asking a question within a specialist's domain — route it silently, do not speak.
+1. First: is this message relevant to the meeting? If it's off-topic (weather, jokes, unrelated personal questions) — respond yourself with ONE short friendly line and list NO specialists. Do not force the team to answer irrelevant questions.
+2. If relevant: which ONE specialist is best suited to answer? Route only to the most relevant specialist — not the whole team. Routing 3+ specialists to a simple question is wrong.
+3. Only YOU respond (no specialists) when: the user is asking about the meeting plan, next steps, team assignments, or wants a summary.
+4. Output MANAGER_FORMAT — your spoken reply (which may be empty if routing silently) + SPECIALISTS (one name max for simple questions) + TASKS.
+5. NEVER parrot ${getUserAddress(ctx)}'s words back. NEVER send the full team to answer one question.
 
 ${MANAGER_FORMAT}
 ${HARD_RAILS}`;
@@ -426,7 +463,7 @@ function buildDirectMessagePrompt(agentId, ctx, messages, content, stateStr) {
 
     const senderLabel = internal
         ? `Another agent has directed a question to you.`
-        : `The client has addressed you directly.`;
+        : `${getUserAddress(ctx)} has addressed you directly.`;
 
     return `You are ${agent.name}, ${agent.title || 'specialist'} at LevelUp Growth.
 You have been directly addressed.
@@ -671,7 +708,18 @@ function parseTasksResponse(raw) {
 function parseMentions(content) {
     if (!content) return { type: 'none', agents: [] };
 
-    const lower = content.toLowerCase();
+    const lower = content.toLowerCase().trim();
+
+    // ── Command detection — intercept control words before any agent runs ──────
+    const STOP_COMMANDS  = /^(stop|quiet|enough|pause|hold on|wait|shh|silence|stop talking|be quiet|stop it|ok stop|ok enough|thanks enough|that'?s enough)/i;
+    const RESUME_COMMANDS = /^(continue|go on|proceed|resume|carry on|keep going|ok go|next)/i;
+
+    if (STOP_COMMANDS.test(lower)) {
+        return { type: 'command', command: 'stop', agents: [] };
+    }
+    if (RESUME_COMMANDS.test(lower)) {
+        return { type: 'command', command: 'resume', agents: [] };
+    }
 
     if (/@everyone\b/.test(lower) || /@all\b/.test(lower) || /@team\b/.test(lower)) {
         return { type: 'all', agents: [] };
@@ -690,6 +738,22 @@ function parseMentions(content) {
     for (const [mention, id] of Object.entries(NAME_MAP)) {
         const re = new RegExp(mention.replace('@', '@') + '\\b', 'i');
         if (re.test(content) && !agents.includes(id)) agents.push(id);
+    }
+
+    // Plain name detection (no @ required) — short messages that start with or are just a name
+    // e.g. "Sarah" / "James?" / "Hey Priya" / "Sarah, what do you think?"
+    if (!agents.length) {
+        const PLAIN_NAMES = [
+            { pattern: /^\s*(hey\s+)?sarah[,?!.\s]*/i, id: 'dmm'    },
+            { pattern: /^\s*(hey\s+)?james[,?!.\s]*/i,  id: 'james'  },
+            { pattern: /^\s*(hey\s+)?priya[,?!.\s]*/i,  id: 'priya'  },
+            { pattern: /^\s*(hey\s+)?marcus[,?!.\s]*/i, id: 'marcus' },
+            { pattern: /^\s*(hey\s+)?elena[,?!.\s]*/i,  id: 'elena'  },
+            { pattern: /^\s*(hey\s+)?alex[,?!.\s]*/i,   id: 'alex'   },
+        ];
+        for (const { pattern, id } of PLAIN_NAMES) {
+            if (pattern.test(content)) { agents.push(id); break; }
+        }
     }
 
     return agents.length

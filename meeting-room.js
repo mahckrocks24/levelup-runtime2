@@ -502,6 +502,21 @@ async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
         ? content.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '[tool call removed]').trim()
         : content;
 
+    // ── Command intercept — stop/resume before any agent activity ────────────
+    if (mention.type === 'command') {
+        if (mention.command === 'stop') {
+            // Acknowledge immediately — no agent runs
+            await setState(mid, 'open', { current_speaker: null });
+            await postAgent(mid, "dmm", "Understood, Boss. Holding the team. Say when to continue.", "message", { direct_reply_to: "user" });
+            return;
+        }
+        if (mention.command === 'resume') {
+            await setState(mid, 'open', { current_speaker: null });
+            await postAgent(mid, 'dmm', 'On it — picking up where we left off.', 'message', { direct_reply_to: 'user' });
+            // Fall through to normal routing so agents continue
+        }
+    }
+
     const m = await getMeeting(mid);
     const spoken = m.spokenAgents || ['dmm'];
     const meetingState = await meetingStateLib.getState(mid);
@@ -547,13 +562,28 @@ async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
         return;
     }
 
-    // @specific — bypass Sarah
+    // @specific — route directly to named agent(s)
+    // DMM uses callManager (her native path), specialists use callSpecialist
     if (mention.type === 'mention') {
         for (const agentId of mention.agents) {
             await setState(mid, `speaking_${agentId}`, { current_speaker: agentId });
             await markSpoken(mid, agentId);
-            const resp = await callSpecialist(agentId, ctx, histWithUser, content, mid, meetingState, memory, '');
-            if (resp) { await postAgent(mid, agentId, resp, 'message', { direct_reply_to: 'user' }); await sleep(300); }
+            if (agentId === 'dmm') {
+                // Sarah uses her manager path so she gets proper context + can delegate
+                const sarahDirect = await callManager(buildUserTurnPrompt(ctx, histWithUser, stateStr, memStr), mid);
+                if (sarahDirect.reply) {
+                    await postAgent(mid, 'dmm', sarahDirect.reply, 'message', { direct_reply_to: 'user' });
+                    await sleep(300);
+                }
+                // If Sarah wants to delegate further, run those specialists too
+                if (sarahDirect.specialists?.length) {
+                    await runRound(mid, ctx, sarahDirect.specialists, sarahDirect.tasks,
+                        ctx._siteContext ? formatSiteContext(ctx._siteContext) : '');
+                }
+            } else {
+                const resp = await callSpecialist(agentId, ctx, histWithUser, content, mid, meetingState, memory, '');
+                if (resp) { await postAgent(mid, agentId, resp, 'message', { direct_reply_to: 'user' }); await sleep(300); }
+            }
         }
         await setState(mid, 'open', { current_speaker: null });
         return;
