@@ -102,6 +102,11 @@ async function callManager(prompt, mid) {
 
 // ── LLM: Specialist call (with deliberation + tool execution) ─────────────
 async function callSpecialist(agentId, ctx, history, task, mid, meetingState, memory, siteCtxStr = '') {
+    // Phase 5: validate required parameters
+    if (!agentId) { console.error('[SPECIALIST ERROR] Missing agentId'); return null; }
+    if (!mid)     { console.error('[SPECIALIST ERROR] Missing meeting id'); return null; }
+    if (!task)    { console.warn(`[SPECIALIST WARN] ${agentId}: no task specified — using default`); task = 'Give your expert perspective on the discussion so far.'; }
+
     const m = await getMeeting(mid);
     const agentResponses = (m?.messages || []).filter(x => x.agent_id === agentId).length;
 
@@ -127,7 +132,10 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
             const taskKeywords = typeof task === 'string' ? task : '';
             const rankedMems   = rankMemories(taskKeywords, agentId, [], recentTasks);
             const rankedMemStr = formatRankedMemory(rankedMems);
-            const combinedResearch = [researchStr, rankedMemStr].filter(Boolean).join('\n\n');
+            // Phase 2: safe defaults — prevent any undefined from reaching the prompt
+            const safeResearch = researchStr || '';
+            const safeMemory   = rankedMemStr || '';
+            const combinedResearch = [safeResearch, safeMemory].filter(Boolean).join('\n\n');
     const prompt      = buildSpecialistPrompt(agentId, ctx, history, task, stateStr, memStr, deliberation, combinedResearch, siteCtxStr);
 
             const uMsg = attempt === 1
@@ -198,11 +206,17 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
 
             return content;
         } catch(e) {
-            console.error(`[MTG:${mid}] ${agentId} attempt ${attempt}:`, e.message);
-            if (attempt === 3) return null;
+            // Phase 3: explicit specialist error logging
+            console.error(`[SPECIALIST ERROR] ${agentId} attempt ${attempt}/${3}:`, e.message);
+            if (e.stack) console.error(e.stack.split('\n').slice(0,3).join(' | '));
+            if (attempt === 3) {
+                console.error(`[SPECIALIST FAILED AFTER RETRIES] ${agentId} — meeting ${mid}`);
+            }
         }
     }
-    return null;
+    // Phase 4: fallback message so conversation never has silent gaps
+    console.warn(`[SPECIALIST FALLBACK] ${agentId} posting fallback after all retries failed`);
+    return null;  // caller (runRound) handles null gracefully — no fallback text in chat
 }
 
 // ── Auto-extract insights from agent responses ────────────────────────────
@@ -307,6 +321,10 @@ async function runRound(mid, ctx, specialists, tasks, siteCtxStr = '') {
         await setState(mid, `speaking_${agentId}`, { current_speaker: agentId });
         const fresh = await getMeeting(mid);
         const content = await callSpecialist(agentId, ctx, fresh.messages, task, mid, meetingState, memory, siteCtxStr);
+        // Phase 4: log null result so Railway logs show the gap
+        if (!content) {
+            console.warn(`[RUNROUND] ${agentId} returned no content — skipping post for this round`);
+        }
         if (content) {
             await postAgent(mid, agentId, content);
             // ── Governance: store key research findings in agent memory ───
