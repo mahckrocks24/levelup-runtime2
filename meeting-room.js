@@ -122,6 +122,11 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
             // ── Governance: inject agent research memory ──────────────────
             const research    = await researchMemoryRead(1, agentId).catch(() => null);
             const researchStr = formatResearchForPrompt(agentId, research);
+            // Ranked task memory — uses semantic scoring to surface most relevant past work
+            const recentTasks  = (await workspaceMemory.getMemory(1).catch(() => ({}))).recent_tasks || [];
+            const taskKeywords = typeof task === 'string' ? task : '';
+            const rankedMems   = rankMemories(taskKeywords, agentId, [], recentTasks);
+            const rankedMemStr = formatRankedMemory(rankedMems);
             const combinedResearch = [researchStr, rankedMemStr].filter(Boolean).join('\n\n');
     const prompt      = buildSpecialistPrompt(agentId, ctx, history, task, stateStr, memStr, deliberation, combinedResearch, siteCtxStr);
 
