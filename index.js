@@ -126,7 +126,7 @@ app.post('/internal/chat', requireSecret, async (req, res) => {
             { availableTools: registry.list().map(t=>t.name) });
         const messages = [{ role:'system', content:systemPrompt }, ...llmHistory, { role:'user', content:message }];
         const toolDefs = getToolDefinitionsForLLM(registry.list().map(t=>({ name:t.name, description:t.description, parameters:registry.get(t.name)?.parameters })));
-        const result   = await runAgentLoop({ messages, toolDefs, toolRegistry:registry, context:{ task_id:`chat_${conversation_id}_${Date.now()}`, agent_id, workspace_id }, maxRounds:5 });
+        const result   = await runAgentLoop({ messages, toolDefs, toolRegistry:registry, context:{ task_id:`chat_${conversation_id}_${Date.now()}`, agent_id, workspace_id }, maxRounds:3 }); // Part 6: capped at 3 rounds (was 5)
         await appendMessage(workspace_id, conversation_id, 'assistant', result.content);
         res.json({ response:result.content, agent_id, agent_name:agent_id==='dmm'?'Sarah':'Aria', tools_used:result.tools_used, rounds:result.rounds, conversation_id });
     } catch(e) {
@@ -353,6 +353,10 @@ app.post('/internal/assistant', requireSecret, async (req, res) => {
         const suggestions    = routeIntent(message, agent_id);
         const toolSuggestion = formatToolSuggestions(suggestions);
 
+        // ── Part 4.5: Append newly discovered tools to assistant awareness ──
+        const { formatDiscoveredToolsBlock } = require('./tool-discovery');
+        const discoveredBlock = formatDiscoveredToolsBlock(agent_id);
+
         // ── Phase 7: Strategic mode — complex multi-domain queries trigger agent consultation ──
         const STRATEGIC_PATTERNS = [
             /how (can|do|should) (i|we).{10,}(seo|content|campaign|crm|leads|social|ads|funnel)/i,
@@ -424,7 +428,8 @@ Synthesise into one clear strategic recommendation with specific action steps.\`
         }
 
         // ── Build upgraded prompt ───────────────────────────────────────────
-        const systemPrompt = buildAssistantPrompt(message, workspaceCtx, memoryCtx, toolSuggestion);
+        const fullSuggestion = [toolSuggestion, discoveredBlock].filter(Boolean).join('\n\n');
+        const systemPrompt = buildAssistantPrompt(message, workspaceCtx, memoryCtx, fullSuggestion);
 
         const messages = [
             { role:'system', content: systemPrompt },
@@ -436,11 +441,21 @@ Synthesise into one clear strategic recommendation with specific action steps.\`
             callLLM({ messages, max_tokens: 1200, temperature: 0.55 }),
             new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 35000)),
         ]);
-        const raw = (r.content||'').trim();
+        // ── Part 9: Blank-response failsafe — LLM returned empty content ────
+        let raw = (r.content||'').trim();
+        if (!raw) {
+            console.warn('[ASSISTANT] LLM returned empty content — applying failsafe reply');
+            raw = 'I processed your request but the response was empty. Please rephrase or try again.';
+        }
 
         // ── Save to conversation history ─────────────────────────────────────
-        await appendMessage(1, conversation_id, 'user', message);
-        await appendMessage(1, conversation_id, 'assistant', raw);
+        await appendMessage(1, conversation_id, 'user', message).catch(() => {});
+        await appendMessage(1, conversation_id, 'assistant', raw).catch(() => {});
+
+        // ── Part 6: Tool call loop guard — max 3 tool calls per assistant turn ─
+        // (single-turn tool calls — no multi-round agentic loop in assistant)
+        let toolCallCount = 0;
+        const MAX_TOOL_CALLS_PER_TURN = 3;
 
         // ── Tool call intercept ───────────────────────────────────────────────
         const toolMatch = raw.match(/<assistant_tool>\s*([\s\S]*?)\s*<\/assistant_tool>/i);
@@ -458,9 +473,9 @@ Synthesise into one clear strategic recommendation with specific action steps.\`
                         new Promise((_,rej)=>setTimeout(()=>rej(new Error('agent timeout')),30000)),
                     ]);
                     const agent = AGENTS[agentId]||{};
-                    const reply = agentR.content?.trim()||'';
-                    await appendMessage(1, conversation_id, 'assistant', reply);
-                    return res.json({ response:reply, agent_response:true, agent_id:agentId, agent_name:agent.name||agentId, agent_emoji:agent.emoji||'🤖', agent_color:agent.color||'#8B97B0' });
+                    const agentReply = agentR.content?.trim() || raw || 'I reviewed your question and am working on a response.';
+                    await appendMessage(1, conversation_id, 'assistant', agentReply).catch(() => {});
+                    return res.json({ response:agentReply, agent_response:true, agent_id:agentId, agent_name:agent.name||agentId, agent_emoji:agent.emoji||'🤖', agent_color:agent.color||'#8B97B0' });
                 }
 
                 // execute_tool — run a tool through the unified registry (capability-checked)
@@ -472,7 +487,10 @@ Synthesise into one clear strategic recommendation with specific action steps.\`
                         return res.json({ response:`I don't have permission to run ${tool_id} directly. I can consult a specialist agent instead.`, tool_error:'capability_denied' });
                     }
                     const unifiedReg = require('./registry');
-                    const result     = await unifiedReg.execute(tool_id, toolParams, { agent_id });
+                    const result = await Promise.race([
+                        unifiedReg.execute(tool_id, toolParams, { agent_id }),
+                        new Promise((_,rej)=>setTimeout(()=>rej(new Error('tool_timeout')),20000)),
+                    ]).catch(e => ({ success:false, error:e.message }));
                     const textBefore = raw.replace(/<assistant_tool>[\s\S]*<\/assistant_tool>/i,'').trim();
                     return res.json({ response:textBefore || 'Done.', tool_executed:true, tool_id, tool_result:result });
                 }
@@ -484,14 +502,77 @@ Synthesise into one clear strategic recommendation with specific action steps.\`
         }
         res.json({ response: raw });
     } catch(e) {
-        console.error('[ASSISTANT]', e.message);
-        res.status(500).json({ error:e.message, response:"I'm having a technical issue. Please try again." });
+        console.error('[ASSISTANT] Fatal:', e.message, e.stack?.split('\n')[1] || '');
+        // Part 9: Global failsafe — always return a usable response
+        if (!res.headersSent) {
+            res.status(200).json({
+                response: 'The assistant encountered an internal issue but remains operational. Please retry.',
+                error:    e.message,
+                failsafe: true,
+            });
+        }
     }
 });
 
 // ── Phase 9: Growth Insights endpoints ───────────────────────────────────────
 const { generateInsights, readInsights: readGrowthInsights, formatGrowthInsights } = require('./growth-insights');
 const { refreshInsights: refreshCampaignInsights, readInsights: readCampaignInsights } = require('./campaign-learning');
+
+// ── Part 4: Tool Discovery + Health endpoints ────────────────────────────────
+const discovery   = require('./tool-discovery');
+const toolLearning = require('./tool-learning');
+const healthCheck  = require('./tool-health-check');
+
+// Kick off background scan on startup (non-blocking)
+setImmediate(() => {
+    const wp_url = process.env.WP_URL || '';
+    const secret = process.env.WP_SECRET || '';
+    if (wp_url) {
+        discovery.scanPlatformTools(wp_url, secret)
+            .then(r => { if (r.new > 0) toolLearning.learnNewTools(r.dynamic.filter(t => t.auto_discovered)); })
+            .catch(e => console.warn('[STARTUP] Tool discovery failed:', e.message));
+        // Run health checks after 60s to avoid startup load
+        setTimeout(() => {
+            healthCheck.runHealthChecks(wp_url, secret)
+                .catch(e => console.warn('[STARTUP] Health check failed:', e.message));
+        }, 60000);
+    }
+});
+
+app.post('/internal/tools/discover', requireSecret, async (req, res) => {
+    const wp_url = process.env.WP_URL || req.body.wp_url || '';
+    const secret = process.env.WP_SECRET || '';
+    try {
+        const result   = await discovery.scanPlatformTools(wp_url, secret);
+        const newTools = (result.dynamic || []).filter(t => t.auto_discovered);
+        const knowledge = newTools.length
+            ? await toolLearning.learnNewTools(newTools).then(r => r.map(x => x.knowledge))
+            : [];
+        res.json({ success: true, ...result, knowledge });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get('/internal/tools/health', requireSecret, async (req, res) => {
+    try {
+        const summary = await healthCheck.getHealthSummary();
+        res.json({ success: true, ...summary });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/internal/tools/health/run', requireSecret, async (req, res) => {
+    const wp_url = process.env.WP_URL || '';
+    const secret = process.env.WP_SECRET || '';
+    try {
+        const result = await healthCheck.runHealthChecks(wp_url, secret, { force: true });
+        res.json({ success: true, ...result });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 app.post('/internal/insights/refresh', requireSecret, async (req, res) => {
     const wp_url    = process.env.WP_URL || '';

@@ -1261,6 +1261,16 @@ function buildToolPromptBlock(agentId) {
     ].join('\n');
 }
 
+function buildToolPromptBlockWithDiscovery(agentId) {
+    const base = buildToolPromptBlock(agentId);
+    try {
+        const { formatDiscoveredToolsBlock } = require('./tool-discovery');
+        const discoveredBlock = formatDiscoveredToolsBlock(agentId);
+        if (discoveredBlock) return base + '\n\n' + discoveredBlock;
+    } catch (_) {}
+    return base;
+}
+
 function getStats() {
     const tools = Object.values(ALL_TOOLS);
     const byDomain = {};
@@ -1270,6 +1280,7 @@ function getStats() {
 
 module.exports = {
     getTool,
+    buildToolPromptBlockWithDiscovery,
     listAll,
     listByDomain,
     getToolsForAgent,

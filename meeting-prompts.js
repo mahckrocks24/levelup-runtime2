@@ -363,7 +363,7 @@ CONTEXT REMINDER: You are advising the specific business above. Every keyword, t
 recommendation must be relevant to their actual industry, services, and market.
 Using examples from unrelated industries is a critical governance violation.
 
-${buildToolPromptBlock(agentId)}
+${buildToolPromptBlockWithDiscovery(agentId)}
 
 TOOL CALL SYNTAX (use ONLY this format when you need real data):
 <tool_call>{"tool": "tool_id_from_above", "params": {"param": "value"}}</tool_call>

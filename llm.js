@@ -54,9 +54,17 @@ async function callLLM({ messages, tools = [], max_tokens = 1500, temperature = 
         const choice  = response.data.choices[0];
         const message = choice.message;
         const usage   = response.data.usage || {};
-        console.log(`[LLM] done | finish=${choice.finish_reason} | tokens=${usage.total_tokens||'?'}`);
+        if (choice.finish_reason === 'length') {
+            console.warn('[LLM] ⚠ Response truncated (finish_reason=length) — consider raising max_tokens');
+        }
+        console.log(`[LLM] done | finish=${choice.finish_reason} | tokens=${usage.total_tokens||'?'}${choice.finish_reason==='length'?' [TRUNCATED]':''}`);
+        // Part 2: Defensive content extraction — guard all null paths
+        const content = typeof message.content === 'string'
+            ? message.content
+            : (message.content != null ? String(message.content) : '');
+
         return {
-            content:       message.content || '',
+            content,
             tool_calls:    message.tool_calls || [],
             finish_reason: choice.finish_reason,
             usage,

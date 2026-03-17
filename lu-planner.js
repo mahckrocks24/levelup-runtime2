@@ -21,6 +21,7 @@
 'use strict';
 
 const { selectBestAgentForTool, fetchAgentExperience } = require('./behavior-analysis');
+const { filterHealthyTools } = require('./tool-health-check');
 
 const { buildContextPrompt } = require('./lu-context');
 
@@ -177,8 +178,9 @@ function normalisePlan(raw_plan, goal_id, goal) {
       tools = tools.filter(t => !failingTools.includes(t));
     }
 
-    // Fallback: if no valid tools, use agent's first tool
-    const final_tools = tools.length ? tools : [roster.tools[0]];
+    // Part 5: Filter degraded tools via health check (non-blocking — fallback to all if check fails)
+    const healthy_tools = await filterHealthyTools(tools).catch(() => tools);
+    const final_tools = healthy_tools.length ? healthy_tools : (tools.length ? tools : [roster.tools[0]]);
 
     return {
       task_id:    `t_${goal_id}_${i + 1}`,

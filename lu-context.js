@@ -71,7 +71,10 @@ function httpGet(url_string, headers, timeout_ms = 10_000) {
 // ─────────────────────────────────────────────────────────────────────
 
 async function fetchWPContext(wp_url, wp_secret) {
-  if (!wp_url) return {};
+  if (!wp_url) {
+    console.warn('[lu-context] WP_URL not set — returning empty context');
+    return {};
+  }
   try {
     const endpoint = `${wp_url.replace(/\/$/, '')}/wp-json/lu/v1/workspace/context`;
     const res = await httpGet(endpoint, {
