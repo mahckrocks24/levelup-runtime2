@@ -50,13 +50,13 @@ function isInternal(ctx) {
     return ctx?.mode === 'internal';
 }
 
-// ── Dynamic DMM name helper (no hardcoded agent names) ───────────────────────
+// ── Dynamic DMM name helper — uses getAgents() (lazy require, no circular dep) ─
 function getDmmName() {
-    const agents = getAgentsSync();
+    const agents = getAgents();
     return agents.dmm?.name || 'DMM Director';
 }
 function getDmmTitle() {
-    const agents = getAgentsSync();
+    const agents = getAgents();
     return agents.dmm?.title || 'Digital Marketing Manager';
 }
 

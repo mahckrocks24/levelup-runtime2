@@ -35,7 +35,7 @@ process.on('unhandledRejection', (reason) => {
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
-console.log('[STARTUP] LevelUp Runtime v2.23.1 — Intelligence Layer');
+console.log('[STARTUP] LevelUp Runtime v2.23.3 — Stability Patch');
 console.log('[STARTUP] REDIS_URL          :', process.env.REDIS_URL          ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] WP_SECRET          :', process.env.WP_SECRET          ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] LU_SECRET          :', process.env.LU_SECRET          ? 'SET ✓' : 'NOT SET ✗');
