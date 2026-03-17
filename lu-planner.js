@@ -20,6 +20,8 @@
 
 'use strict';
 
+const { selectBestAgentForTool, fetchAgentExperience } = require('./behavior-analysis');
+
 const { buildContextPrompt } = require('./lu-context');
 
 const DEEPSEEK_URL   = 'https://api.deepseek.com/v1/chat/completions';
@@ -213,6 +215,20 @@ function scaffoldPlan(goal_id, goal) {
  * @returns {Promise<{tasks, used_llm, error?}>}
  */
 async function createPlan({ goal_id, goal, context = {}, extra_ctx = '' }) {
+  // Phase 5: Fetch agent experience for intelligent routing
+  const wp_url    = process.env.WP_URL || '';
+  const wp_secret = process.env.LU_SECRET || '';
+  let experienceMap = null;
+  try {
+    const expData = await fetchAgentExperience(wp_url, wp_secret, null);
+    if (expData?.experience) {
+      experienceMap = {};
+      for (const row of expData.experience) {
+        experienceMap[row.agent_id] = row;
+      }
+    }
+  } catch (_) { /* non-critical — plan still runs without experience */ }
+
   const system_prompt = buildPlanSystemPrompt(context);
   const user_message  = extra_ctx
     ? `Goal: ${goal}\n\nAdditional context: ${extra_ctx}`
@@ -220,12 +236,32 @@ async function createPlan({ goal_id, goal, context = {}, extra_ctx = '' }) {
 
   try {
     const raw = await callDeepSeek(system_prompt, user_message);
-    const tasks = normalisePlan(raw, goal_id, goal);
+    let tasks = normalisePlan(raw, goal_id, goal);
     if (!tasks || !tasks.length) {
       console.warn('[planner] LLM returned empty plan — using scaffold');
       return { tasks: scaffoldPlan(goal_id, goal), used_llm: false, error: 'empty_plan' };
     }
-    console.log(`[planner] Generated ${tasks.length}-task plan for goal ${goal_id}`);
+
+    // Phase 5: Re-route tasks to best-performing agent per tool when experience data exists
+    if (experienceMap) {
+      tasks = tasks.map(task => {
+        const primaryTool = task.tools?.[0];
+        if (!primaryTool) return task;
+        const { getToolsForAgent } = require('./tool-registry');
+        const allowedAgents = Object.keys(AGENT_ROSTER).filter(a =>
+          a !== '_any' && getToolsForAgent(a).some(t => t.id === primaryTool)
+        );
+        if (allowedAgents.length <= 1) return task; // no routing decision needed
+        const bestAgent = selectBestAgentForTool(primaryTool, experienceMap, task.agent, allowedAgents);
+        if (bestAgent !== task.agent) {
+          console.log(`[planner] Routing ${primaryTool} to ${bestAgent} (experience-based, was ${task.agent})`);
+          return { ...task, agent: bestAgent };
+        }
+        return task;
+      });
+    }
+
+    console.log(`[planner] Generated ${tasks.length}-task plan for goal ${goal_id}${experienceMap ? ' (experience-routed)' : ''}`);
     return { tasks, used_llm: true };
   } catch (e) {
     console.error('[planner] Planning failed, using scaffold:', e.message);

@@ -1061,6 +1061,56 @@ const BUILDER_TOOLS = {
 
 const GOVERNANCE_TOOLS = {}; // Phase 5
 
+// ── Phase 4: Site intelligence tools ───────────────────────────────────────
+const SITE_TOOLS = {
+
+    get_site_pages: {
+        id:'get_site_pages', domain:'site', name:'List Site Pages',
+        description:'List all pages scanned from the client website. Returns title, URL, meta description, word count. Use before advising on content gaps or site structure.',
+        wp_path:'/lu/v1/site/pages', method:'GET', url_params:[], body_params:[], query_params:['limit','search'],
+        params:{
+            limit:  {type:'integer',required:false,description:'Max pages, default 50'},
+            search: {type:'string', required:false,description:'Filter by keyword in title or content'},
+        },
+        returns:'{ pages:[{id,url,title,meta_description,word_count,last_scanned_at}], count, last_scanned }',
+        requires_approval:false, allowed_agents:['dmm','james','priya','alex'],
+    },
+
+    get_site_page: {
+        id:'get_site_page', domain:'site', name:'Get Site Page Content',
+        description:'Get full content of a scanned page: headings, body text, internal links. Read a page before recommending edits or identifying content gaps.',
+        wp_path:'/lu/v1/site/pages/:id', method:'GET', url_params:['id'], body_params:[], query_params:[],
+        params:{
+            id:{type:'integer',required:true,description:'Page ID from get_site_pages'},
+        },
+        returns:'{ page:{id,url,title,meta_description,content,headers[],internal_links[],word_count} }',
+        requires_approval:false, allowed_agents:['dmm','james','priya','alex'],
+    },
+
+    search_site_content: {
+        id:'search_site_content', domain:'site', name:'Search Site Content',
+        description:'Full-text search across all scanned website pages. Find existing topic coverage, check keyword presence, or identify content gaps.',
+        wp_path:'/lu/v1/site/search', method:'GET', url_params:[], body_params:[], query_params:['q','limit'],
+        params:{
+            q:    {type:'string', required:true, description:'Search query'},
+            limit:{type:'integer',required:false,description:'Max results, default 20'},
+        },
+        returns:'{ results:[{id,url,title,meta_description,content_snippet,word_count}], count, query }',
+        requires_approval:false, allowed_agents:['dmm','james','priya','alex'],
+    },
+
+    scan_site_url: {
+        id:'scan_site_url', domain:'site', name:'Scan Website URL',
+        description:'Crawl a URL and store its content for analysis. Run before get_site_page if not yet scanned. Use sparingly — each call fetches a live page.',
+        wp_path:'/lu/v1/site/scan', method:'POST', url_params:[], body_params:['url'], query_params:[],
+        params:{
+            url:{type:'string',required:true,description:'Full URL to crawl e.g. https://example.com/services'},
+        },
+        returns:'{ success, page_id, url, title, word_count, headers_found, internal_links, http_status }',
+        requires_approval:false, allowed_agents:['alex','james','dmm'],
+    },
+};
+
 // ── Merge all domains ──────────────────────────────────────────────────────
 const ALL_TOOLS = Object.assign(
     {},
@@ -1070,6 +1120,7 @@ const ALL_TOOLS = Object.assign(
     SOCIAL_TOOLS,
     CALENDAR_TOOLS,
     BUILDER_TOOLS,
+    SITE_TOOLS,
     GOVERNANCE_TOOLS
 );
 

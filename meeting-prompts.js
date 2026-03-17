@@ -1,5 +1,7 @@
 'use strict';
 
+const { buildToolPromptBlock } = require('./tool-registry');
+
 /**
  * LevelUp Meeting Prompt Architecture — meeting-prompts.js
  *
@@ -45,6 +47,16 @@ function getTeamRoster(participants) {
 // ── Context helpers ───────────────────────────────────────────────────────
 function isInternal(ctx) {
     return ctx?.mode === 'internal';
+}
+
+// ── Dynamic DMM name helper (no hardcoded agent names) ───────────────────────
+function getDmmName() {
+    const agents = getAgentsSync();
+    return agents.dmm?.name || 'DMM Director';
+}
+function getDmmTitle() {
+    const agents = getAgentsSync();
+    return agents.dmm?.title || 'Digital Marketing Manager';
 }
 
 function fmtCtx(ctx) {
@@ -177,7 +189,7 @@ ${greetingBlock ? '0. ' + greetingBlock + '\n' : ''}1. Open with a crisp brief: 
 MANDATORY: All examples, keywords, campaigns, and strategies must be specific to the workspace business.
 Agents must use available tools (serp_analysis, deep_audit, ai_report, etc.) before presenting conclusions.`;
 
-    return `You are Sarah, Digital Marketing Manager at LevelUp Growth.
+    return `You are ${getDmmName()}, ${getDmmTitle()} at LevelUp Growth.
 You are opening a meeting as the facilitator and strategic lead.
 
 ${modeBlock}
@@ -207,7 +219,7 @@ function buildDiscussionManagerPrompt(ctx, messages, stateStr, memStr) {
     const history  = fmtHistory(messages, 25);
     const ctxBlock = fmtCtx(ctx);
 
-    return `You are Sarah, Digital Marketing Manager at LevelUp Growth.
+    return `You are ${getDmmName()}, ${getDmmTitle()} at LevelUp Growth.
 You are facilitating the discussion round of a meeting.
 
 ${internal ? INTERNAL_RAILS : USER_RAILS}
@@ -244,7 +256,7 @@ function buildRefinementManagerPrompt(ctx, messages, stateStr) {
     const history  = fmtHistory(messages, 20);
     const ctxBlock = fmtCtx(ctx);
 
-    return `You are Sarah, Digital Marketing Manager at LevelUp Growth.
+    return `You are ${getDmmName()}, ${getDmmTitle()} at LevelUp Growth.
 You are running the refinement round — the final challenge phase before synthesis.
 
 ${internal ? INTERNAL_RAILS : USER_RAILS}
@@ -278,7 +290,7 @@ ${HARD_RAILS}`;
 function buildCheckinPrompt(messages, stateStr) {
     const history = fmtHistory(messages, 15);
 
-    return `You are Sarah, Digital Marketing Manager at LevelUp Growth.
+    return `You are ${getDmmName()}, ${getDmmTitle()} at LevelUp Growth.
 The structured analysis rounds are complete. You are now checking in with the client before writing the action plan.
 
 USER-FACING MODE: The client is present and may want to redirect, add context, or confirm direction.
@@ -347,10 +359,11 @@ CONTEXT REMINDER: You are advising the specific business above. Every keyword, t
 recommendation must be relevant to their actual industry, services, and market.
 Using examples from unrelated industries is a critical governance violation.
 
-TOOL USE:
-If real data would materially improve your answer, call a tool using this format:
-<tool_call>{"tool": "tool_id", "params": {...}}</tool_call>
-Only call one tool per turn. Only call a tool if you actually need the data — don't call tools for the sake of it.
+${buildToolPromptBlock(agentId)}
+
+TOOL CALL SYNTAX (use ONLY this format when you need real data):
+<tool_call>{"tool": "tool_id_from_above", "params": {"param": "value"}}</tool_call>
+One tool per turn. Only call when real data genuinely improves the answer.
 
 ${HARD_RAILS}`;
 }
@@ -364,7 +377,7 @@ function buildUserTurnPrompt(ctx, messages, stateStr, memStr) {
     const history  = fmtHistory(messages, 20);
     const ctxBlock = fmtCtx(ctx);
 
-    return `You are Sarah, Digital Marketing Manager at LevelUp Growth.
+    return `You are ${getDmmName()}, ${getDmmTitle()} at LevelUp Growth.
 The client has sent a message during the live meeting. You are the first to respond.
 
 USER-FACING MODE: The client is active. Read their message carefully — they may be redirecting the meeting, asking a question, or adding new information.
@@ -442,7 +455,7 @@ function buildSynthesisPrompt(ctx, messages, stateStr, memStr) {
         ? `This synthesis will be consumed by the task generation system and by the requesting agent (${ctx.requestingAgent || 'system'}). Write it as a structured briefing document, not a client-facing report.`
         : `This synthesis will be shown to the client as the output of the meeting. Write it in clear business language.`;
 
-    return `You are Sarah, Digital Marketing Manager at LevelUp Growth.
+    return `You are ${getDmmName()}, ${getDmmTitle()} at LevelUp Growth.
 The meeting is complete. Write the final action plan.
 
 ${audienceNote}

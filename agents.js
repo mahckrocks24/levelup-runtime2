@@ -139,41 +139,63 @@ HARD RULES: All agents always present. Never claim someone is unavailable. When 
 const TEAM_ROSTER = getTeamRoster();
 
 // ── buildAssistantPrompt (unchanged from Sprint F) ─────────────────────────
-function buildAssistantPrompt(message, context = {}) {
-    const agents = getAgentsSync();
-    const names  = Object.values(agents).map(a => `${a.name} (${a.title})`).join(', ');
-    return `You are the LevelUp AI Assistant — a smart interface layer for the LevelUp Growth marketing platform.
+function buildAssistantPrompt(message, context = {}, memory = {}) {
+    const agents    = getAgentsSync();
+    const agentList = Object.values(agents)
+        .map(a => `  ${a.id || a.agent_id} — ${a.name} (${a.title})`)
+        .join('\n');
 
-Your job is to help the user navigate the platform, understand agent activity, and take actions.
+    const bizParts = [
+        context.business_name || context.businessName
+            ? `Business: ${context.business_name || context.businessName}` : '',
+        context.industry  ? `Industry: ${context.industry}` : '',
+        context.location  ? `Location: ${context.location}` : '',
+        context.goals     ? `Goals: ${context.goals}` : '',
+        Array.isArray(context.services) && context.services.length
+            ? `Services: ${context.services.join(', ')}` : '',
+    ].filter(Boolean).join('\n');
 
-PLATFORM CONTEXT:
-${context.businessName ? `Business: ${context.businessName}` : ''}
-${context.industry ? `Industry: ${context.industry}` : ''}
-${context.goals ? `Goals: ${context.goals}` : ''}
+    const memBlock = memory.previous_campaigns?.length
+        ? `Recent campaigns: ${memory.previous_campaigns.slice(-3).map(c=>c.topic).join(', ')}`
+        : '';
 
-AVAILABLE AGENTS: ${names}
+    return `You are the LevelUp AI Assistant — the intelligent interface for the LevelUp Growth marketing platform.
 
-You can:
-1. Answer questions about the platform and agent activity
-2. Navigate to platform views by calling tools
-3. Consult specialist agents for domain expertise
+Your job: help the user navigate, understand agent activity, consult specialists, and execute tools.
 
-TOOLS AVAILABLE:
-<assistant_tool>{ "tool": "navigate", "params": { "view": "workspace|projects|agents|crm|marketing|social|calendar|reports|approvals" } }</assistant_tool>
-<assistant_tool>{ "tool": "ask_agent", "params": { "agent": "dmm|james|priya|marcus|elena|alex", "question": "..." } }</assistant_tool>
+WORKSPACE PROFILE:
+${bizParts || '(No workspace profile configured — ask the user about their business.)'}
+${memBlock}
 
-Keep responses concise (under 100 words unless detail is needed).
-When asked about specific domains, use ask_agent to get specialist input.
-Current user message: ${message}`;
+SPECIALIST TEAM:
+${agentList}
+
+TOOLS:
+<assistant_tool>{ "tool": "navigate", "params": { "view": "workspace|projects|agents|crm|seo|marketing|social|calendar|reports|approvals" } }</assistant_tool>
+<assistant_tool>{ "tool": "ask_agent", "params": { "agent": "<agent_id>", "question": "specific question" } }</assistant_tool>
+<assistant_tool>{ "tool": "execute_tool", "params": { "tool_id": "<tool_id>", "params": {} } }</assistant_tool>
+
+RULES:
+- For SEO, content, CRM, social, or technical questions → use ask_agent for expert input.
+- For live platform data → use execute_tool.
+- Match response length to complexity. No artificial word limits.
+- Never invent data — offer to fetch it if you don't have it.
+- You have full conversation history — use it for continuity.`;
 }
 
 function buildAgentConsultPrompt(agentId, question, context = {}) {
     const agents = getAgentsSync();
     const agent  = agents[agentId] || AGENTS_STATIC[agentId] || { name: agentId, title: 'Specialist' };
+    const biz    = [
+        context.business_name || context.businessName ? (context.business_name || context.businessName) : '',
+        context.industry      ? `Industry: ${context.industry}` : '',
+        context.location      ? `Location: ${context.location}` : '',
+        Array.isArray(context.services) && context.services.length
+            ? `Services: ${context.services.join(', ')}` : '',
+    ].filter(Boolean).join(' | ');
     return `You are ${agent.name}, ${agent.title} at LevelUp Growth.
-${context.businessName ? `Business: ${context.businessName}` : ''}
-${context.industry ? `Industry: ${context.industry}` : ''}
-Answer concisely as your specialist role. Be direct and actionable.`;
+${biz ? `Working for: ${biz}` : ''}
+Answer as your specialist role. Be direct, specific, and actionable. No filler.`;
 }
 
 // Pre-fetch agents on module load (non-blocking)

@@ -25,14 +25,36 @@ const app  = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
-console.log('[STARTUP] LevelUp Runtime v2.13.0 — Phase 1A');
-console.log('[STARTUP] REDIS_URL    :', process.env.REDIS_URL        ? 'SET ✓' : 'NOT SET ✗');
+console.log('[STARTUP] LevelUp Runtime v2.23.1 — Intelligence Layer');
+console.log('[STARTUP] REDIS_URL          :', process.env.REDIS_URL          ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] WP_SECRET          :', process.env.WP_SECRET          ? 'SET ✓' : 'NOT SET ✗');
-console.log('[STARTUP] SYNTHESIS_ENDPOINT :', process.env.SYNTHESIS_ENDPOINT ? 'SET ✓' : 'NOT SET — tasks will skip LLM synthesis');
-console.log('[STARTUP] WP_URL             :', process.env.WP_URL             ? 'SET ✓' : 'NOT SET ✗ — context fetches will fail (agents operate without business profile)');
-console.log('[STARTUP] LU_SECRET    :', process.env.LU_SECRET        ? 'SET ✓' : 'NOT SET ✗');
-console.log('[STARTUP] DEEPSEEK_KEY :', process.env.DEEPSEEK_API_KEY ? 'SET ✓' : 'NOT SET ✗');
-console.log('[STARTUP] Tools        :', registry.list().map(t=>t.name).join(', '));
+console.log('[STARTUP] LU_SECRET          :', process.env.LU_SECRET          ? 'SET ✓' : 'NOT SET ✗');
+console.log('[STARTUP] DEEPSEEK_KEY       :', process.env.DEEPSEEK_API_KEY   ? 'SET ✓' : 'NOT SET ✗');
+console.log('[STARTUP] WP_URL             :', process.env.WP_URL             ? 'SET ✓' : 'NOT SET ✗ — workspace context fetches will fail');
+console.log('[STARTUP] SYNTHESIS_ENDPOINT :', process.env.SYNTHESIS_ENDPOINT ? 'SET ✓' : 'NOT SET ✗ — tasks will deliver raw tool output');
+console.log('[STARTUP] LLM_PROVIDER       :', process.env.LLM_PROVIDER || 'deepseek (default)');
+console.log('[STARTUP] Tools (unified)    :', registry.list().length, 'tools loaded from canonical registry');
+
+// ── Phase 9: Critical config validation — warn loudly on missing vars ────────
+const CRITICAL_VARS = {
+    WP_URL:             'Workspace context fetch — agents operate without business profile',
+    SYNTHESIS_ENDPOINT: 'LLM synthesis — task outputs will be raw JSON instead of agent prose',
+    WP_SECRET:          'Runtime authentication — all WP callbacks will fail',
+    DEEPSEEK_API_KEY:   'LLM provider — no AI calls possible',
+    REDIS_URL:          'Memory + queue — platform will not function',
+};
+const MISSING_CRITICAL = Object.entries(CRITICAL_VARS)
+    .filter(([k]) => !process.env[k])
+    .map(([k, desc]) => `  ✗ ${k}: ${desc}`);
+
+if (MISSING_CRITICAL.length) {
+    console.error('\n[STARTUP] ⚠️  CRITICAL CONFIGURATION MISSING:');
+    MISSING_CRITICAL.forEach(m => console.error('[STARTUP]' + m));
+    console.error('[STARTUP] Platform may not function correctly until these are set.\n');
+}
+if (process.env.LLM_PROVIDER && !['deepseek','openai'].includes(process.env.LLM_PROVIDER.toLowerCase())) {
+    console.error(`[STARTUP] ✗ LLM_PROVIDER="${process.env.LLM_PROVIDER}" is not a recognised provider. Use: deepseek or openai`);
+}
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 function requireSecret(req, res, next) {
@@ -295,42 +317,95 @@ app.post('/internal/workspace-memory', requireSecret, async (req, res) => {
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── Global AI Assistant ───────────────────────────────────────────────────
+// ── Global AI Assistant (Phase 3 — Intelligence Upgrade) ─────────────────────
+// Upgrades: persistent conversation history, workspace memory, tool execution,
+//           1200 token budget, no 100-word restriction, unified tool access.
 app.post('/internal/assistant', requireSecret, async (req, res) => {
-    const { message, context={}, history=[] } = req.body;
+    const { message, context={}, conversation_id='default', agent_id='dmm' } = req.body;
     if (!message?.trim()) return res.status(400).json({ error:'message required' });
+
     const { buildAssistantPrompt, buildAgentConsultPrompt, AGENTS, TOKENS } = require('./agents');
-    const { callLLM } = require('./llm');
+    const { callLLM }   = require('./llm');
+    const { getHistory, appendMessage } = require('./conversation');
+    const { longTermReadAll } = require('./lu-memory');
+    const { getWorkspaceContext } = require('./lu-context');
+
     try {
-        const systemPrompt = buildAssistantPrompt(message, context);
+        // ── Load conversation history (7-day Redis) ─────────────────────────
+        const conv_history = await getHistory(1, conversation_id);
+        const llm_history  = conv_history.slice(-14).map(m => ({ role: m.role, content: m.content }));
+
+        // ── Enrich context with workspace memory ────────────────────────────
+        const wp_url    = process.env.WP_URL || '';
+        const wp_secret = process.env.WP_SECRET || '';
+        const [wsContext, ltMemory] = await Promise.allSettled([
+            getWorkspaceContext(wp_url, wp_secret),
+            longTermReadAll(),
+        ]);
+        const workspaceCtx = {
+            ...context,
+            ...(wsContext.status === 'fulfilled' ? wsContext.value : {}),
+        };
+        const memoryCtx = ltMemory.status === 'fulfilled' ? ltMemory.value : {};
+
+        // ── Build upgraded prompt ───────────────────────────────────────────
+        const systemPrompt = buildAssistantPrompt(message, workspaceCtx, memoryCtx);
+
         const messages = [
             { role:'system', content: systemPrompt },
-            ...history.slice(-10).map(h=>({ role: h.role, content: h.content })),
+            ...llm_history,
             { role:'user', content: message },
         ];
+
         const r = await Promise.race([
-            callLLM({ messages, max_tokens: 500, temperature: 0.5 }),
-            new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 30000)),
+            callLLM({ messages, max_tokens: 1200, temperature: 0.55 }),
+            new Promise((_,rej) => setTimeout(()=>rej(new Error('timeout')), 35000)),
         ]);
         const raw = (r.content||'').trim();
+
+        // ── Save to conversation history ─────────────────────────────────────
+        await appendMessage(1, conversation_id, 'user', message);
+        await appendMessage(1, conversation_id, 'assistant', raw);
+
+        // ── Tool call intercept ───────────────────────────────────────────────
         const toolMatch = raw.match(/<assistant_tool>\s*([\s\S]*?)\s*<\/assistant_tool>/i);
         if (toolMatch) {
             try {
                 const toolCall = JSON.parse(toolMatch[1].trim());
+
+                // ask_agent — delegate to specialist
                 if (toolCall.tool === 'ask_agent' && toolCall.params?.agent) {
                     const agentId  = toolCall.params.agent;
                     const question = toolCall.params.question || message;
-                    const persona  = buildAgentConsultPrompt(agentId, question, context);
+                    const persona  = buildAgentConsultPrompt(agentId, question, workspaceCtx);
                     const agentR   = await Promise.race([
                         callLLM({ messages:[{role:'system',content:persona},{role:'user',content:'Answer now.'}], max_tokens: TOKENS.specialist, temperature:0.65 }),
                         new Promise((_,rej)=>setTimeout(()=>rej(new Error('agent timeout')),30000)),
                     ]);
                     const agent = AGENTS[agentId]||{};
-                    return res.json({ response:agentR.content?.trim()||'', agent_response:true, agent_id:agentId, agent_name:agent.name||agentId, agent_emoji:agent.emoji||'🤖', agent_color:agent.color||'#8B97B0' });
+                    const reply = agentR.content?.trim()||'';
+                    await appendMessage(1, conversation_id, 'assistant', reply);
+                    return res.json({ response:reply, agent_response:true, agent_id:agentId, agent_name:agent.name||agentId, agent_emoji:agent.emoji||'🤖', agent_color:agent.color||'#8B97B0' });
                 }
+
+                // execute_tool — run a tool through the unified registry (capability-checked)
+                if (toolCall.tool === 'execute_tool' && toolCall.params?.tool_id) {
+                    const tool_id   = toolCall.params.tool_id;
+                    const toolParams = toolCall.params.params || {};
+                    const { hasCapability } = require('./capability-map');
+                    if (!hasCapability(agent_id, tool_id)) {
+                        return res.json({ response:`I don't have permission to run ${tool_id} directly. I can consult a specialist agent instead.`, tool_error:'capability_denied' });
+                    }
+                    const unifiedReg = require('./registry');
+                    const result     = await unifiedReg.execute(tool_id, toolParams, { agent_id });
+                    const textBefore = raw.replace(/<assistant_tool>[\s\S]*<\/assistant_tool>/i,'').trim();
+                    return res.json({ response:textBefore || 'Done.', tool_executed:true, tool_id, tool_result:result });
+                }
+
+                // navigate — platform navigation
                 const textBefore = raw.replace(/<assistant_tool>[\s\S]*<\/assistant_tool>/i,'').trim();
-                return res.json({ response:textBefore||`I'll ${toolCall.tool.replace(/_/g,' ')} that for you.`, tool_call:toolCall });
-            } catch(e) { /* JSON parse failed — treat as plain */ }
+                return res.json({ response:textBefore||`Navigating now.`, tool_call:toolCall });
+            } catch(e) { /* JSON parse failed — treat as plain text */ }
         }
         res.json({ response: raw });
     } catch(e) {

@@ -421,6 +421,12 @@ async function userMessage(mid, content, attachments = []) {
 }
 
 async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
+    // ── Phase 8: Security — strip any <tool_call> tags from user messages ──
+    // Tool calls must only come from AI responses, never raw user input.
+    const sanitisedContent = typeof content === 'string'
+        ? content.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '[tool call removed]').trim()
+        : content;
+
     const m = await getMeeting(mid);
     const spoken = m.spokenAgents || ['dmm'];
     const meetingState = await meetingStateLib.getState(mid);
@@ -428,8 +434,9 @@ async function handleUserTurn(mid, content, ctx, mention, attachments = []) {
     const stateStr     = meetingStateLib.formatStateForPrompt(meetingState);
     const memStr       = workspaceMemory.formatMemoryForPrompt(memory);
 
+    // Use sanitised content for all subsequent processing
     const histWithUser = [...m.messages, {
-        role: 'user', name: 'You', content,
+        role: 'user', name: 'You', content: sanitisedContent,
         attachments: attachments || [],
         timestamp: new Date().toISOString(),
     }];

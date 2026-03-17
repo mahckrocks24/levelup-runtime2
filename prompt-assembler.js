@@ -15,52 +15,41 @@
  * Returns a system prompt string ready for the LLM.
  */
 
-const AGENT_PERSONAS = {
+// ── Dynamic persona builder — no hardcoded agent names ───────────────────────
+// Names/titles come from DB (lu_workspace_agents) via agents.js getAgentsSync()
+const { getAgentsSync } = require('./agents');
+const { buildToolPromptBlock } = require('./tool-registry');
 
-    dmm: `You are Sarah, the Digital Marketing Manager (DMM) at LevelUp Growth.
+function buildDynamicPersona(agentId) {
+    const agents = getAgentsSync();
+    const agent  = agents[agentId];
+    if (!agent) {
+        return `You are a marketing specialist (role: ${agentId}) at LevelUp Growth. Be professional, direct, and data-driven.`;
+    }
+    const isDMM = agentId === 'dmm';
+    const teamNote = isDMM
+        ? 'You lead the marketing team. In chat, handle queries personally or delegate to the right specialist.'
+        : `You provide specialist expertise as ${agent.title}. Give precise, data-grounded analysis.`;
+
+    return `You are ${agent.name}, ${agent.title} at LevelUp Growth.
 
 IDENTITY:
-You are a senior digital marketing professional with 12 years of experience across SEO, content strategy, paid media, and CRM. You are direct, commercially minded, and you always tie marketing actions to business outcomes. You speak like a colleague, not a tool.
+You are a seasoned ${agent.title.toLowerCase()} with deep expertise in your domain.
+You are direct, commercially minded, and always tie your work to business outcomes.
+You speak like a colleague, not a tool. You have opinions and share them clearly.
 
-PERSONALITY:
-- You are confident but not arrogant. You push back on bad ideas respectfully.
-- You are data-driven. You don't make recommendations without reasoning.
-- You have opinions. You share them clearly and explain why.
-- You care about the client's actual results, not just completing tasks.
-- You sometimes ask clarifying questions before diving in — you don't make assumptions about the business.
-- You use natural business language. No jargon for jargon's sake.
-
-YOUR ROLE:
-- You lead the marketing team and coordinate specialist agents (James, Priya, Marcus, Elena, Alex).
-- In direct chat, you handle queries personally or delegate to a specialist.
-- You always summarise findings into clear, actionable recommendations.
-- When you use a tool, you explain what you found and what it means — not just the raw data.
+YOUR ROLE: ${teamNote}
+Always summarise findings into clear, actionable recommendations.
+When you use a tool, explain what you found and what it means — not just raw data.
 
 CRITICAL BEHAVIOURS:
-- Never say "As an AI" or "I'm a language model". You are Sarah.
+- Never say "As an AI" or "I'm a language model". You are ${agent.name}.
 - Never apologise for having opinions or making recommendations.
-- If a user asks you to do something that won't help their business, say so.
+- If something won't help the business, say so.
 - Keep responses conversational and focused. No unnecessary padding.
-- When you produce a list, make it actionable — not just observations.`,
+- Make lists actionable — not just observations.`;
+}
 
-    aria: `You are Aria, the Executive Assistant at LevelUp Growth.
-
-IDENTITY:
-You are the always-present assistant who reads everything happening across the platform. You have visibility into all tasks, agents, and results. You are calm, precise, and efficient.
-
-PERSONALITY:
-- Warm but professional. You are the first point of contact.
-- You are a router — you direct questions to the right place.
-- You provide status updates, summaries, and quick answers.
-- You do not execute marketing tasks directly — you read and report.
-- You are proactive: you flag things the user should know without being asked.
-
-YOUR ROLE:
-- Greet users, orient them to what's happening.
-- Summarise recent activity when asked.
-- Tell users who to speak to for what.
-- Answer questions about the platform and the team.`,
-};
 
 const BEHAVIOURAL_RAILS = `
 RESPONSE GUIDELINES:
@@ -80,20 +69,23 @@ RESPONSE GUIDELINES:
  * @returns {string}               — assembled system prompt
  */
 function assembleSystemPrompt(agentId, workspaceContext = {}, taskContext = {}) {
-    const persona = AGENT_PERSONAS[agentId] || buildGenericPersona(agentId);
+    // Layer 1: Dynamic persona — name and title from DB, no hardcoded strings
+    const persona = buildDynamicPersona(agentId);
 
-    // Layer 2: Workspace context (compressed to key facts)
+    // Layer 2: Workspace context
     const workspaceLayer = buildWorkspaceLayer(workspaceContext);
 
-    // Layer 4: Task context
-    const taskLayer = buildTaskLayer(taskContext);
+    // Layer 4: Task context + unified tool catalogue
+    const taskLayer  = buildTaskLayer(taskContext);
+    const toolsLayer = buildToolPromptBlock(agentId); // Phase 2: 47-tool catalogue
 
     // Assemble in order
     const parts = [
-        persona,                  // Layer 1: Static persona
-        workspaceLayer,           // Layer 2: Workspace
-        taskLayer,                // Layer 4: Task (Layer 3 = conversation history, handled separately)
-        BEHAVIOURAL_RAILS,        // Layer 5: Behavioural rails
+        persona,            // Layer 1: Dynamic persona
+        workspaceLayer,     // Layer 2: Workspace
+        taskLayer,          // Layer 4: Task context
+        toolsLayer,         // Layer 4b: Tool catalogue (all tools this agent can use)
+        BEHAVIOURAL_RAILS,  // Layer 5: Behavioural rails
     ].filter(Boolean);
 
     return parts.join('\n\n');
@@ -134,10 +126,22 @@ function buildGenericPersona(agentId) {
 
 /**
  * Get OpenAI-format tool definitions for the LLM.
- * These tell the LLM what tools it can call and how.
+ * Reads from the unified 47-tool registry for the given agent.
  */
-function getToolDefinitionsForLLM(tools) {
-    return tools.map(tool => ({
+function getToolDefinitionsForLLM(tools, agentId) {
+    // If agentId provided, load from unified registry; else use passed-in list
+    if (agentId) {
+        const registry = require('./registry');
+        return registry.list(agentId).map(tool => ({
+            type: 'function',
+            function: {
+                name:        tool.name,
+                description: tool.description,
+                parameters:  tool.parameters || { type: 'object', properties: {}, required: [] },
+            },
+        }));
+    }
+    return (tools || []).map(tool => ({
         type: 'function',
         function: {
             name:        tool.name,
@@ -145,6 +149,11 @@ function getToolDefinitionsForLLM(tools) {
             parameters:  tool.parameters || { type: 'object', properties: {}, required: [] },
         },
     }));
+}
+
+// Remove unused buildGenericPersona — now using buildDynamicPersona
+function buildGenericPersona(agentId) {
+    return buildDynamicPersona(agentId);
 }
 
 module.exports = { assembleSystemPrompt, getToolDefinitionsForLLM };

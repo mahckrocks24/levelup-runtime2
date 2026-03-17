@@ -35,6 +35,8 @@ const CAPABILITY_MAP = {
         'create_event', 'list_events', 'update_event', 'check_availability', 'create_booking_slot',
         // Builder
         'list_builder_pages', 'get_builder_page', 'ai_builder_action', 'generate_page_layout', 'publish_builder_page', 'import_html_page',
+        // Site intelligence
+        'get_site_pages', 'get_site_page', 'search_site_content', 'scan_site_url',
     ],
 
     // James — SEO Specialist
@@ -52,6 +54,8 @@ const CAPABILITY_MAP = {
         'list_events', 'check_availability', 'create_event', 'update_event',
         // Builder — read only
         'list_builder_pages', 'get_builder_page',
+        // Site intelligence
+        'get_site_pages', 'get_site_page', 'search_site_content', 'scan_site_url',
     ],
 
     // Priya — Content Specialist
@@ -66,6 +70,8 @@ const CAPABILITY_MAP = {
         'list_events', 'check_availability', 'create_event', 'update_event',
         // Builder — content generation
         'list_builder_pages', 'get_builder_page', 'ai_builder_action', 'generate_page_layout',
+        // Site intelligence — read only
+        'get_site_pages', 'get_site_page', 'search_site_content',
     ],
 
     // Marcus — Social Media Specialist
@@ -101,6 +107,8 @@ const CAPABILITY_MAP = {
         'list_events', 'check_availability', 'create_event', 'update_event',
         // Builder — read + import
         'list_builder_pages', 'get_builder_page', 'import_html_page',
+        // Site intelligence — full access for technical SEO
+        'get_site_pages', 'get_site_page', 'search_site_content', 'scan_site_url',
     ],
 };
 
