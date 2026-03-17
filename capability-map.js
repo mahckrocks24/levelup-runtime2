@@ -24,10 +24,11 @@ const CAPABILITY_MAP = {
     dmm: [
         // SEO
         'autonomous_goal', 'list_goals', 'agent_status', 'pause_goal', 'ai_status',
-        // CRM
-        'create_lead', 'get_lead', 'update_lead', 'list_leads', 'move_lead', 'log_activity', 'add_note', 'enroll_sequence',
-        // Marketing
-        'create_campaign', 'update_campaign', 'list_campaigns', 'create_template', 'list_templates', 'create_automation', 'record_metric',
+        // CRM — full access including sequence discovery
+        'create_lead', 'get_lead', 'update_lead', 'list_leads', 'move_lead', 'log_activity', 'add_note', 'enroll_sequence', 'list_sequences',
+        // Marketing — full access including schedule + sequences
+        'create_campaign', 'update_campaign', 'list_campaigns', 'schedule_campaign',
+        'create_template', 'list_templates', 'create_automation', 'record_metric',
         // Social
         'create_post', 'schedule_post', 'list_posts', 'update_post', 'get_queue', 'record_social_analytics',
         // Calendar
@@ -38,8 +39,9 @@ const CAPABILITY_MAP = {
 
     // James — SEO Specialist
     james: [
-        // SEO
+        // SEO — full access including link analysis
         'serp_analysis', 'ai_report', 'deep_audit', 'ai_status', 'list_goals', 'agent_status', 'pause_goal',
+        'link_suggestions', 'outbound_links', 'check_outbound',
         // CRM — read only
         'get_lead', 'list_leads',
         // Marketing — read only
@@ -72,8 +74,8 @@ const CAPABILITY_MAP = {
         'ai_status', 'list_goals', 'agent_status',
         // Marketing — read only
         'list_campaigns',
-        // Social — full access
-        'create_post', 'schedule_post', 'list_posts', 'update_post', 'get_queue', 'record_social_analytics',
+        // Social — full access including publish
+        'create_post', 'schedule_post', 'publish_post', 'list_posts', 'update_post', 'get_queue', 'record_social_analytics',
         // Calendar
         'list_events', 'check_availability', 'create_event', 'update_event',
     ],
@@ -82,8 +84,8 @@ const CAPABILITY_MAP = {
     elena: [
         // SEO — utility only
         'ai_status', 'list_goals', 'agent_status',
-        // CRM — full access
-        'create_lead', 'get_lead', 'update_lead', 'list_leads', 'move_lead', 'log_activity', 'add_note', 'enroll_sequence',
+        // CRM — full access including sequence discovery
+        'create_lead', 'get_lead', 'update_lead', 'list_leads', 'move_lead', 'log_activity', 'add_note', 'enroll_sequence', 'list_sequences',
         // Marketing — template and campaign read
         'list_campaigns', 'list_templates',
         // Calendar — full access

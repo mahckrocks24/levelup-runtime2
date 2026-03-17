@@ -122,7 +122,7 @@ const SEO_TOOLS = {
         returns:          '{ success, draft_id, draft_content, created_at, cached }',
         requires_approval: true,
         approval_preview: 'Generate an improved draft for post #{post_id} targeting "{keyword}". Creates a new draft version — does not modify the live post.',
-        allowed_agents:   ['priya'],
+        allowed_agents:   ['priya', 'james'],  // fixed: both content agents can write
     },
 
     write_article: {
@@ -142,7 +142,7 @@ const SEO_TOOLS = {
         returns:          '{ success, keyword, post_id, title, edit_url, preview_url, tokens_used, message }',
         requires_approval: true,
         approval_preview: 'Write and save a new SEO article{keyword ? \' targeting "\' + keyword + \'"\' : \' (keyword auto-selected)\'}. Creates a new WordPress draft post.',
-        allowed_agents:   ['priya'],
+        allowed_agents:   ['priya', 'james'],  // remediated: james also writes articles
     },
 
     // ── Internal Links ─────────────────────────────────────────────────────
@@ -488,6 +488,24 @@ const CRM_TOOLS = {
         approval_preview: 'Enroll lead #{lead_id} in email sequence #{id}. Will begin automated email steps.',
         allowed_agents:   ['elena', 'dmm'],
     },
+    list_sequences: {
+        id:               'list_sequences',
+        domain:           'crm',
+        name:             'List CRM Sequences',
+        description:      'List all available email/automation sequences. Required before enroll_sequence to discover valid sequence IDs.',
+        wp_path:          '/lucrm/v1/sequences',
+        method:           'GET',
+        url_params:       [],
+        body_params:      [],
+        query_params:     ['status', 'limit'],
+        params: {
+            status: { type: 'string',  required: false, description: 'Filter: active, draft, archived' },
+            limit:  { type: 'integer', required: false, description: 'Max results, default 50' },
+        },
+        returns:          '{ sequences: [{ id, name, status, step_count }], total }',
+        requires_approval: false,
+        allowed_agents:   ['elena', 'dmm'],
+    },
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -556,6 +574,25 @@ const MARKETING_TOOLS = {
         returns:          'campaign[]',
         requires_approval: false,
         allowed_agents:   ['priya', 'dmm', 'james', 'marcus', 'elena'],
+    },
+
+    schedule_campaign: {
+        id:               'schedule_campaign',
+        domain:           'marketing',
+        name:             'Schedule Campaign',
+        description:      'Schedule a campaign to run at a specific date and time. Updates campaign status to scheduled.',
+        wp_path:          '/lumkt/v1/campaigns/:id/schedule',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      ['scheduled_at'],
+        query_params:     [],
+        params: {
+            id:           { type: 'integer', required: true,  description: 'Campaign ID to schedule' },
+            scheduled_at: { type: 'string',  required: true,  description: 'ISO datetime to schedule: YYYY-MM-DD HH:MM:SS' },
+        },
+        returns:          '{ success, scheduled_at, campaign_id }',
+        requires_approval: false,
+        allowed_agents:   ['dmm'],
     },
 
     create_template: {
@@ -680,6 +717,24 @@ const SOCIAL_TOOLS = {
         returns:          '{ success }',
         requires_approval: true,
         approval_preview: 'Schedule post #{id} to publish at {scheduled_at} on the connected platform.',
+        allowed_agents:   ['marcus', 'dmm'],
+    },
+
+    publish_post: {
+        id:               'publish_post',
+        domain:           'social',
+        name:             'Publish Social Post',
+        description:      'Publish a social post immediately. If a LinkedIn account is connected, publishes to LinkedIn. Otherwise marks as published in DB with a note.',
+        wp_path:          '/lusocial/v1/posts/:id/publish',
+        method:           'POST',
+        url_params:       ['id'],
+        body_params:      [],
+        query_params:     [],
+        params: {
+            id: { type: 'integer', required: true, description: 'Post ID to publish' },
+        },
+        returns:          '{ success, note?, external_id? }',
+        requires_approval: true,   // Governance: external publish requires approval
         allowed_agents:   ['marcus', 'dmm'],
     },
 
