@@ -194,76 +194,6 @@ async function agentContextWrite(agent_id, data, ws_id = WS_ID) {
 }
 
 async function agentContextRead(agent_id, ws_id = WS_ID) {
-// ── Agent Research Memory ────────────────────────────────────────────────────
-// Stores structured research findings per agent per workspace.
-// Written after each specialist turn in a meeting.
-// Read into specialist prompts before each turn.
-
-const KEY_RESEARCH = (ws_id, agent_id) => `lu:research:${ws_id}:${agent_id}`;
-const RESEARCH_TTL  = 90 * 24 * 60 * 60;  // 90 days
-
-// Schema per agent role:
-const RESEARCH_SCHEMA = {
-  james:  { keywords: [], competitor_insights: [], ranking_audits: [], serp_findings: [], updated_at: null },
-  priya:  { content_gaps: [], topic_clusters: [], editorial_notes: [], content_ideas: [], updated_at: null },
-  marcus: { platform_notes: {}, content_formats: [], audience_insights: [], updated_at: null },
-  elena:  { pipeline_notes: [], lead_patterns: [], sequence_performance: [], updated_at: null },
-  alex:   { crawl_errors: [], performance_issues: [], schema_opportunities: [], technical_notes: [], updated_at: null },
-  dmm:    { strategic_insights: [], validated_strategies: [], campaign_notes: [], updated_at: null },
-};
-
-async function researchMemoryRead(ws_id, agent_id) {
-  try {
-    const raw = await redis.get(KEY_RESEARCH(ws_id, agent_id));
-    if (raw) return JSON.parse(raw);
-    // Return schema-matched empty record
-    return { ...(RESEARCH_SCHEMA[agent_id] || { notes: [], updated_at: null }), agent_id };
-  } catch(_) {
-    return { notes: [], agent_id, updated_at: null };
-  }
-}
-
-async function researchMemoryAppend(ws_id, agent_id, findings) {
-  // findings: { field: 'keywords', items: [...] } OR { field: 'notes', item: '...' }
-  if (!findings || !agent_id) return;
-  try {
-    const mem = await researchMemoryRead(ws_id, agent_id);
-    const { field, items, item } = findings;
-    if (field && Array.isArray(mem[field])) {
-      const toAdd = items || (item ? [item] : []);
-      toAdd.forEach(v => {
-        const str = typeof v === 'string' ? v.trim() : JSON.stringify(v);
-        if (str && !mem[field].includes(str)) mem[field].push(str);
-      });
-      // Cap each field at 30 entries
-      if (mem[field].length > 30) mem[field] = mem[field].slice(-30);
-    } else if (field && typeof mem[field] === 'object' && !Array.isArray(mem[field])) {
-      // Merge object fields (e.g. platform_notes)
-      Object.assign(mem[field], findings.value || {});
-    }
-    mem.updated_at = new Date().toISOString();
-    await redis.set(KEY_RESEARCH(ws_id, agent_id), JSON.stringify(mem), 'EX', RESEARCH_TTL);
-  } catch(e) {
-    console.error(`[research-mem] append failed for ${agent_id}:`, e.message);
-  }
-}
-
-function formatResearchForPrompt(agent_id, research) {
-  if (!research) return '';
-  const lines = [];
-  const schema = RESEARCH_SCHEMA[agent_id] || {};
-  for (const field of Object.keys(schema)) {
-    if (field === 'updated_at') continue;
-    const val = research[field];
-    if (Array.isArray(val) && val.length) {
-      lines.push(`${field.replace(/_/g,' ').toUpperCase()}:\n${val.slice(-10).map(v=>`  • ${v}`).join('\n')}`);
-    }
-  }
-  if (!lines.length) return '';
-  const when = research.updated_at ? ` (last updated ${new Date(research.updated_at).toLocaleDateString()})` : '';
-  return `[YOUR RESEARCH MEMORY${when}]\n${lines.join('\n\n')}\n[/YOUR RESEARCH MEMORY]`;
-}
-
   const raw = await redis.get(KEY_AGENT_CTX(ws_id, agent_id));
   return raw ? JSON.parse(raw) : null;
 }
@@ -301,7 +231,6 @@ async function retrieveForTask({ task_id, agent_id, title, tools = [], ws_id = W
 }
 
 module.exports = {
-  researchMemoryRead, researchMemoryAppend, formatResearchForPrompt,
   // Short-term
   shortTermWrite,
   shortTermRead,

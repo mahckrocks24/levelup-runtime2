@@ -22,6 +22,16 @@ const { handlePlan }     = require('./lu-intelligence-routes');
 const activityRoutes     = require('./lu-activity-routes');
 
 const app  = express();
+// ── Phase 7: Global crash guard — runtime must never exit on uncaught errors ──
+process.on('uncaughtException', (err) => {
+    console.error('[CRASH GUARD] Uncaught exception (runtime continues):', err.message);
+    console.error(err.stack?.split('\n').slice(0, 4).join('\n') || '');
+});
+process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    console.error('[CRASH GUARD] Unhandled rejection (runtime continues):', msg);
+});
+
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
@@ -332,30 +342,50 @@ app.post('/internal/assistant', requireSecret, async (req, res) => {
     const { getWorkspaceContext } = require('./lu-context');
 
     try {
-        // ── Load conversation history (7-day Redis) ─────────────────────────
-        const conv_history = await getHistory(1, conversation_id);
-        const llm_history  = conv_history.slice(-14).map(m => ({ role: m.role, content: m.content }));
-
-        // ── Enrich context with workspace memory ────────────────────────────
+        // ── Phase 0: Hard 8s timeout across ALL pre-work (history + context + memory) ──
+        // Redis hang is the primary cause of blank responses. If ANY pre-work exceeds 8s,
+        // we skip it and go straight to the LLM with whatever context we have.
+        const PREWORK_TIMEOUT = 8000;
         const wp_url    = process.env.WP_URL || '';
         const wp_secret = process.env.WP_SECRET || '';
-        const [wsContext, ltMemory] = await Promise.allSettled([
+
+        const preworkTimeout = new Promise(resolve =>
+            setTimeout(() => {
+                console.warn('[ASSISTANT] Pre-work timeout — proceeding with base context only');
+                resolve({ timedOut: true });
+            }, PREWORK_TIMEOUT)
+        );
+
+        const preworkPromise = Promise.allSettled([
+            getHistory(1, conversation_id),
             getWorkspaceContext(wp_url, wp_secret),
             longTermReadAll(),
         ]);
-        const workspaceCtx = {
-            ...context,
-            ...(wsContext.status === 'fulfilled' ? wsContext.value : {}),
-        };
-        const memoryCtx = ltMemory.status === 'fulfilled' ? ltMemory.value : {};
+
+        const preworkResult = await Promise.race([preworkPromise, preworkTimeout]);
+
+        let llm_history  = [];
+        let workspaceCtx = { ...context };
+        let memoryCtx    = {};
+
+        if (!preworkResult.timedOut) {
+            const [histResult, wsResult, memResult] = preworkResult;
+            const conv_history = histResult.status === 'fulfilled' ? histResult.value : [];
+            llm_history  = conv_history.slice(-14).map(m => ({ role: m.role, content: m.content }));
+            workspaceCtx = { ...context, ...(wsResult.status === 'fulfilled' ? wsResult.value : {}) };
+            memoryCtx    = memResult.status === 'fulfilled' ? memResult.value : {};
+        }
 
         // ── Phase 2: Pre-reasoning tool suggestion ─────────────────────────
         const suggestions    = routeIntent(message, agent_id);
         const toolSuggestion = formatToolSuggestions(suggestions);
 
-        // ── Part 4.5: Append newly discovered tools to assistant awareness ──
-        const { formatDiscoveredToolsBlock } = require('./tool-discovery');
-        const discoveredBlock = formatDiscoveredToolsBlock(agent_id);
+        // ── Part 4.5: Append newly discovered tools (guarded — non-blocking) ──
+        let discoveredBlock = '';
+        try {
+            const { formatDiscoveredToolsBlock } = require('./tool-discovery');
+            discoveredBlock = formatDiscoveredToolsBlock(agent_id);
+        } catch (_) { /* tool-discovery unavailable — continue without it */ }
 
         // ── Phase 7: Strategic mode — complex multi-domain queries trigger agent consultation ──
         const STRATEGIC_PATTERNS = [
@@ -415,10 +445,13 @@ Team inputs:
 
 Synthesise into one clear strategic recommendation with specific action steps.\` },
                 ];
-                const synthR = await callLLM({ messages: synthMessages, max_tokens: 800, temperature: 0.5 });
+                const synthR = await Promise.race([
+                    callLLM({ messages: synthMessages, max_tokens: 800, temperature: 0.5 }),
+                    new Promise((_,rej) => setTimeout(() => rej(new Error('synthesis_timeout')), 25000)),
+                ]).catch(() => ({ content: contributions.join('\n\n') }));
                 const reply  = synthR.content?.trim() || contributions.join('\n\n');
-                await appendMessage(1, conversation_id, 'user', message);
-                await appendMessage(1, conversation_id, 'assistant', reply);
+                await appendMessage(1, conversation_id, 'user', message).catch(() => {});
+                await appendMessage(1, conversation_id, 'assistant', reply).catch(() => {});
                 return res.json({
                     response:        reply,
                     strategic_mode:  true,
@@ -515,38 +548,23 @@ Synthesise into one clear strategic recommendation with specific action steps.\`
 });
 
 // ── Phase 9: Growth Insights endpoints ───────────────────────────────────────
-const { generateInsights, readInsights: readGrowthInsights, formatGrowthInsights } = require('./growth-insights');
-const { refreshInsights: refreshCampaignInsights, readInsights: readCampaignInsights } = require('./campaign-learning');
+// Lazy — growth-insights and campaign-learning connect Redis at module load.
+// Required inside handlers to avoid boot-time Redis connection race.
 
 // ── Part 4: Tool Discovery + Health endpoints ────────────────────────────────
-const discovery   = require('./tool-discovery');
-const toolLearning = require('./tool-learning');
-const healthCheck  = require('./tool-health-check');
-
-// Kick off background scan on startup (non-blocking)
-setImmediate(() => {
-    const wp_url = process.env.WP_URL || '';
-    const secret = process.env.WP_SECRET || '';
-    if (wp_url) {
-        discovery.scanPlatformTools(wp_url, secret)
-            .then(r => { if (r.new > 0) toolLearning.learnNewTools(r.dynamic.filter(t => t.auto_discovered)); })
-            .catch(e => console.warn('[STARTUP] Tool discovery failed:', e.message));
-        // Run health checks after 60s to avoid startup load
-        setTimeout(() => {
-            healthCheck.runHealthChecks(wp_url, secret)
-                .catch(e => console.warn('[STARTUP] Health check failed:', e.message));
-        }, 60000);
-    }
-});
+// Lazy requires — these modules connect Redis at load time; defer until actually needed.
+// discovery, toolLearning, healthCheck are required inline inside route handlers only.
 
 app.post('/internal/tools/discover', requireSecret, async (req, res) => {
-    const wp_url = process.env.WP_URL || req.body.wp_url || '';
+    const wp_url = process.env.WP_URL || req.body?.wp_url || '';
     const secret = process.env.WP_SECRET || '';
     try {
-        const result   = await discovery.scanPlatformTools(wp_url, secret);
+        const { scanPlatformTools } = require('./tool-discovery');
+        const { learnNewTools }     = require('./tool-learning');
+        const result   = await scanPlatformTools(wp_url, secret);
         const newTools = (result.dynamic || []).filter(t => t.auto_discovered);
         const knowledge = newTools.length
-            ? await toolLearning.learnNewTools(newTools).then(r => r.map(x => x.knowledge))
+            ? await learnNewTools(newTools).then(r => r.map(x => x.knowledge))
             : [];
         res.json({ success: true, ...result, knowledge });
     } catch (e) {
@@ -556,7 +574,8 @@ app.post('/internal/tools/discover', requireSecret, async (req, res) => {
 
 app.get('/internal/tools/health', requireSecret, async (req, res) => {
     try {
-        const summary = await healthCheck.getHealthSummary();
+        const { getHealthSummary } = require('./tool-health-check');
+        const summary = await getHealthSummary();
         res.json({ success: true, ...summary });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -567,7 +586,8 @@ app.post('/internal/tools/health/run', requireSecret, async (req, res) => {
     const wp_url = process.env.WP_URL || '';
     const secret = process.env.WP_SECRET || '';
     try {
-        const result = await healthCheck.runHealthChecks(wp_url, secret, { force: true });
+        const { runHealthChecks } = require('./tool-health-check');
+        const result = await runHealthChecks(wp_url, secret, { force: true });
         res.json({ success: true, ...result });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -578,6 +598,8 @@ app.post('/internal/insights/refresh', requireSecret, async (req, res) => {
     const wp_url    = process.env.WP_URL || '';
     const wp_secret = process.env.WP_SECRET || '';
     try {
+        const { generateInsights }           = require('./growth-insights');
+        const { refreshInsights: refreshCampaignInsights } = require('./campaign-learning');
         const [growth, campaign] = await Promise.allSettled([
             generateInsights(wp_url, wp_secret),
             refreshCampaignInsights(wp_url, wp_secret),
@@ -594,6 +616,8 @@ app.post('/internal/insights/refresh', requireSecret, async (req, res) => {
 
 app.get('/internal/insights/current', requireSecret, async (req, res) => {
     try {
+        const { readInsights: readGrowthInsights }          = require('./growth-insights');
+        const { readInsights: readCampaignInsights }         = require('./campaign-learning');
         const [growth, campaign] = await Promise.allSettled([
             readGrowthInsights(),
             readCampaignInsights(),
@@ -655,7 +679,17 @@ app.use((req, res) => res.status(404).json({ error:'Not found', path:req.path })
 
 // ── Start ──────────────────────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SERVER] ✓ LevelUp Runtime v2.13.0 Phase 1A on :${PORT}`);
+    console.log(`[SERVER] ✓ LevelUp Runtime v2.23.3 on :${PORT}`);
+    console.log('[SERVER] Routes registered — Assistant ready');
+    // Phase 2+6: Background worker starts AFTER server is live (never blocks boot)
+    try {
+        const worker = require('./tool-discovery-worker');
+        worker.start();
+        console.log('[SERVER] Background discovery scheduled');
+    } catch (e) {
+        // Worker failure never prevents the server from running
+        console.warn('[SERVER] Background worker failed to start (non-fatal):', e.message);
+    }
     // lu-bootstrap: starts lu-task-worker (Phase 7) + crash recovery
     require('./lu-bootstrap');
 });

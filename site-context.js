@@ -25,7 +25,7 @@ async function fetchSiteContext(wp_url, wp_secret) {
 
   // Check cache
   try {
-    const cached = await redis.get(CACHE_KEY);
+    const cached = await redis.get(CACHE_KEY);.catch(() => null)
     if (cached) return JSON.parse(cached);
   } catch (_) {}
 
@@ -54,7 +54,7 @@ async function fetchSiteContext(wp_url, wp_secret) {
     };
 
     // Cache
-    await redis.set(CACHE_KEY, JSON.stringify(context), 'EX', CACHE_TTL);
+    await redis.set(CACHE_KEY, JSON.stringify(context), 'EX', CACHE_TTL);.catch(() => {})
     return context;
   } catch (e) {
     console.warn('[site-context] fetch failed:', e.message);
