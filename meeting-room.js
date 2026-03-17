@@ -171,12 +171,17 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
                     : `${toolBlock}\n\nNow give your expert response using this real data. Be specific about the numbers.`;
 
                 // Step 5 — second LLM call with real tool data
+                // Sanitize content for history: strip tags so LLM doesn't mirror them
+                const contentForHistory = content
+                    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '[tool call made]')
+                    .replace(/<\/?tool_call>/gi, '')
+                    .trim();
                 const followUp = await Promise.race([
                     callLLM({
                         messages: [
                             { role: 'system', content: prompt },
                             { role: 'user',   content: uMsg },
-                            { role: 'assistant', content: content },
+                            { role: 'assistant', content: contentForHistory },
                             { role: 'user',   content: followUpPrompt },
                         ],
                         max_tokens: TOKENS.specialist,
@@ -200,10 +205,13 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
                 }
             }
 
-            // Strip any residual <tool_call> tags from final content before posting
-            // (LLM sometimes re-emits tool call syntax in follow-up responses)
+            // Strip ALL tool call/result tags from final content before posting
+            // Handles: matched pairs, orphan opening tags, orphan closing tags
             const strippedContent = content
-                .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+                .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')  // matched pairs
+                .replace(/<\/?tool_call>/gi, '')                       // orphan tags
+                .replace(/<tool_result>[\s\S]*?<\/tool_result>/gi, '') // result blocks
+                .replace(/<\/?tool_result>/gi, '')                     // orphan result tags
                 .trim();
             if (!strippedContent) continue;  // entire response was a tool call — retry
             content = strippedContent;
