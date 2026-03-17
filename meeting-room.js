@@ -200,6 +200,14 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
                 }
             }
 
+            // Strip any residual <tool_call> tags from final content before posting
+            // (LLM sometimes re-emits tool call syntax in follow-up responses)
+            const strippedContent = content
+                .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+                .trim();
+            if (!strippedContent) continue;  // entire response was a tool call — retry
+            content = strippedContent;
+
             // Duplicate check
             if (isDuplicate(content, m?.messages || [])) {
                 if (attempt === 3) return null;

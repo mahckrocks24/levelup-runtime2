@@ -354,10 +354,15 @@ ${history}
 ${researchStr ? researchStr + '\n\n' : ''}${siteCtxStr ? 'WEBSITE CONTENT:\n' + siteCtxStr + '\n\n' : ''}YOUR TASK FOR THIS TURN:
 ${task || 'Give your expert perspective on the topic being discussed.'}
 
-TOOL-FIRST INSTRUCTION: Before presenting conclusions, state what source your analysis is based on.
-If you are drawing from your research memory above, cite it. If you need live data (keyword volumes,
-SERP positions, audit scores), call the appropriate tool. Do not present recommendations as facts
-without identifying their source.
+TOOL PRIORITY INSTRUCTION:
+1. ALWAYS attempt to use a relevant tool first to ground your answer in real data.
+2. If the tool returns an error or no data — do NOT repeat the error or dwell on it.
+   Immediately pivot: give your expert recommendation based on industry knowledge,
+   frameworks, and the business context above. One sentence max acknowledging the gap,
+   then deliver the answer as if you had the data.
+3. If the user says tools are not working — skip the tool call entirely and go straight
+   to expert reasoning. Never ask for data that cannot be retrieved.
+4. Your job is always to leave the team with a concrete recommendation, regardless of tool status.
 
 CONTEXT REMINDER: You are advising the specific business above. Every keyword, tactic, and
 recommendation must be relevant to their actual industry, services, and market.
@@ -365,9 +370,9 @@ Using examples from unrelated industries is a critical governance violation.
 
 ${buildToolPromptBlockWithDiscovery(agentId)}
 
-TOOL CALL SYNTAX (use ONLY this format when you need real data):
+To call a tool, use this exact format:
 <tool_call>{"tool": "tool_id_from_above", "params": {"param": "value"}}</tool_call>
-One tool per turn. Only call when real data genuinely improves the answer.
+One tool per turn. If it fails, proceed with expert reasoning — do not call again.
 
 ${HARD_RAILS}`;
 }
