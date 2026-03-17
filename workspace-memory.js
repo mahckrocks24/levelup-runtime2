@@ -46,10 +46,20 @@ async function updateFromMeeting(workspaceId, meetingData) {
     const m = await getMemory(workspaceId);
     m.meeting_count = (m.meeting_count || 0) + 1;
 
-    // Upsert business profile
-    if (meetingData.businessName) m.business_profile.name = meetingData.businessName;
-    if (meetingData.website)      m.business_profile.website = meetingData.website;
-    if (meetingData.industry)     m.business_profile.industry = meetingData.industry;
+    // ── Governance: upsert ALL 8 profile fields — WP values always override ──
+    if (meetingData.businessName)    m.business_profile.name            = meetingData.businessName;
+    if (meetingData.business_name)   m.business_profile.name            = meetingData.business_name;
+    if (meetingData.website)         m.business_profile.website         = meetingData.website;
+    if (meetingData.industry)        m.business_profile.industry        = meetingData.industry;
+    if (meetingData.location)        m.business_profile.location        = meetingData.location;
+    if (meetingData.brand_voice)     m.business_profile.brand_voice     = meetingData.brand_voice;
+    if (meetingData.target_audience) m.business_profile.target_audience = meetingData.target_audience;
+    if (meetingData.competitors)     m.business_profile.competitors     = meetingData.competitors;
+    if (meetingData.business_desc)   m.business_profile.description     = meetingData.business_desc;
+    // Services: prefer array, fall back to existing
+    const svcs = Array.isArray(meetingData.services) && meetingData.services.length
+        ? meetingData.services : null;
+    if (svcs) m.business_profile.services = svcs;
 
     // Record campaign
     if (meetingData.topic) {
@@ -90,9 +100,21 @@ function formatMemoryForPrompt(memory) {
     if (!memory) return '';
     const parts = ['WORKSPACE MEMORY (persistent context from past meetings):'];
     const biz = memory.business_profile;
-    if (biz?.name) parts.push(`BUSINESS: ${biz.name}${biz.industry ? ` — ${biz.industry}` : ''}${biz.website ? ` (${biz.website})` : ''}`);
+    if (biz?.name) {
+        let bizLine = `BUSINESS: ${biz.name}`;
+        if (biz.industry)  bizLine += ` — ${biz.industry}`;
+        if (biz.location)  bizLine += ` | Location: ${biz.location}`;
+        if (biz.website)   bizLine += ` (${biz.website})`;
+        parts.push(bizLine);
+        if (biz.description)     parts.push(`Description: ${biz.description}`);
+        if (biz.brand_voice)     parts.push(`Brand voice: ${biz.brand_voice}`);
+        if (biz.target_audience) parts.push(`Target audience: ${biz.target_audience}`);
+        if (biz.competitors)     parts.push(`Key competitors: ${biz.competitors}`);
+        if (Array.isArray(biz.services) && biz.services.length)
+            parts.push(`Services:\n${biz.services.map(s=>`  • ${s}`).join('\n')}`);
+    }
     if (memory.target_audience?.length)
-        parts.push(`TARGET AUDIENCE:\n${memory.target_audience.map(a=>`• ${a}`).join('\n')}`);
+        parts.push(`AUDIENCE SEGMENTS:\n${memory.target_audience.map(a=>`• ${a}`).join('\n')}`);
     if (memory.brand_positioning)
         parts.push(`BRAND POSITIONING: ${memory.brand_positioning}`);
     if (memory.key_strategies?.length)

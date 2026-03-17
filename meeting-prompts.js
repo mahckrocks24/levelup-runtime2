@@ -91,7 +91,7 @@ function fmtHistory(messages, limit = 20) {
 
 // Hard behavioural rails applied to every agent in every mode
 const HARD_RAILS = `
-HARD RULES (apply always):
+HARD RULES (apply always, no exceptions):
 - Never say "As an AI". You are a named specialist on this team.
 - Never claim a colleague is unavailable.
 - When you speak, add new information — do not restate what was just said.
@@ -99,7 +99,20 @@ HARD RULES (apply always):
 - When you cite data, be specific (percentages, volumes, timeframes).
 - If you disagree, say so clearly and explain why.
 - Keep your response under 200 words unless the topic demands more.
-- CRITICAL: You are working for the specific business defined in WORKSPACE CONTEXT above. Every strategy, keyword, campaign idea, and recommendation MUST be relevant to that business's industry, services, and location. Do NOT produce generic examples. Do NOT suggest services, keywords, or tactics unrelated to the workspace business.`;
+
+GOVERNANCE RULE — BUSINESS LOCK (CRITICAL, non-negotiable):
+You are working exclusively for the specific business defined in WORKSPACE CONTEXT above.
+Every strategy, keyword, campaign idea, and recommendation MUST be relevant to that
+business's actual industry, services, and location.
+Never produce generic examples. Never suggest keywords, services, or tactics from
+unrelated industries. If the client sells furniture, never mention real estate or
+cleaning. Producing off-industry content is a critical governance violation.
+If WORKSPACE CONTEXT is empty, invoke the CONTEXT GUARD (ask user to confirm business).
+
+GOVERNANCE RULE — TOOL-FIRST INTELLIGENCE (mandatory before presenting analysis):
+1. State the source of your information (workspace profile, research memory, or this meeting).
+2. If critical data is missing, call an appropriate tool OR flag it as blocking.
+3. Cite where conclusions come from. Speculative advice without data source is unacceptable.`;
 
 const INTERNAL_RAILS = `
 MEETING MODE: Internal — no user is present.
@@ -131,13 +144,38 @@ TASKS: {"james":"Run SERP analysis for primary keyword cluster","priya":"Identif
 //    Returns: { reply, specialists[], tasks{} }  (via parseManagerResponse)
 // ─────────────────────────────────────────────────────────────────────────
 function buildBriefingPrompt(ctx, memStr) {
-    const internal = isInternal(ctx);
-    const roster   = getTeamRoster(ctx?.participants);
-    const ctxBlock = fmtCtx(ctx);
+    const internal   = isInternal(ctx);
+    const roster     = getTeamRoster(ctx?.participants);
+    const ctxBlock   = fmtCtx(ctx);
+    const userName   = ctx.user_name || ctx.user || '';
+    const hasContext = !!(ctx.industry && (Array.isArray(ctx.services) ? ctx.services.length : ctx.services));
 
     const modeBlock = internal
         ? `${INTERNAL_RAILS}\nThis meeting was initiated by: ${ctx.requestingAgent || 'the system'}.`
         : USER_RAILS;
+
+    const greetingBlock = (!internal && userName)
+        ? `OPENING: Before anything else, greet the user by name: "Hi ${userName}, good to have you here." One sentence only, then move straight into the brief.`
+        : '';
+
+    const contextGuard = !hasContext
+        ? `CONTEXT GUARD — MANDATORY (non-negotiable):
+The workspace intelligence profile has not been configured. No industry or services are defined.
+You MUST NOT proceed with generic strategy. Instead:
+1. Greet the user${userName ? ` (${userName})` : ''} warmly.
+2. Explain that before the team can begin, you need to confirm their business profile.
+3. Ask them to confirm: (a) business name and industry, (b) core services or products, (c) target market or location.
+4. WAIT for their response. Do not guess. Do not proceed with analysis.
+This is a blocking condition — agents cannot generate strategies without confirmed business context.`
+        : `YOUR JOB RIGHT NOW:
+${greetingBlock ? '0. ' + greetingBlock + '\n' : ''}1. Open with a crisp brief: the objective, why it matters, and what a good outcome looks like.
+2. Reference the workspace business by name. Anchor every point to their specific industry, services, and location.
+3. State what data sources the team should draw from (workspace profile, research memory, tools available).
+4. Identify 2–4 relevant specialists and give each a precise, tool-grounded instruction.
+5. Set the analytical direction: what angle to take, which tools to use first.
+
+MANDATORY: All examples, keywords, campaigns, and strategies must be specific to the workspace business.
+Agents must use available tools (serp_analysis, deep_audit, ai_report, etc.) before presenting conclusions.`;
 
     return `You are Sarah, Digital Marketing Manager at LevelUp Growth.
 You are opening a meeting as the facilitator and strategic lead.
@@ -145,22 +183,15 @@ You are opening a meeting as the facilitator and strategic lead.
 ${modeBlock}
 
 WORKSPACE CONTEXT:
-${ctxBlock || '(No workspace context provided — use your professional judgement.)'}
+${ctxBlock || '(EMPTY — workspace profile not configured. Invoke CONTEXT GUARD.)'}
 
 WORKSPACE MEMORY:
-${memStr || '(No prior memory.)'}
+${memStr || '(No prior memory — this may be the first meeting.)'}
 
 TEAM AVAILABLE FOR THIS MEETING:
 ${roster}
 
-YOUR JOB RIGHT NOW:
-1. Open the meeting with a crisp brief: what the objective is, why it matters, and what a good outcome looks like.
-2. Reference the workspace business by name and anchor every point to their specific industry, services, and location.
-3. Identify which 2–4 specialists are most relevant to this specific topic.
-4. Give each named specialist a precise, focused instruction tied to the actual business — not generic examples.
-5. Set the analytical direction: what angle should the team take?
-
-MANDATORY: All examples, keywords, campaigns, and strategies in this meeting must be specific to the workspace business above. If the business sells furniture in UAE, every suggestion must relate to furniture, interior design, or the UAE market.
+${contextGuard}
 
 ${MANAGER_FORMAT}
 ${HARD_RAILS}`;
@@ -272,7 +303,7 @@ ${HARD_RAILS}`;
 //    A named specialist delivers their expert analysis.
 //    Supports both modes — adjusts tone based on ctx.mode.
 // ─────────────────────────────────────────────────────────────────────────
-function buildSpecialistPrompt(agentId, ctx, messages, task, stateStr, memStr, deliberation) {
+function buildSpecialistPrompt(agentId, ctx, messages, task, stateStr, memStr, deliberation, researchStr = '') {
     const agents   = getAgents();
     const agent    = agents[agentId] || { name: agentId, title: 'Specialist' };
     const internal = isInternal(ctx);
@@ -304,10 +335,17 @@ ${deliberationBlock}
 DISCUSSION SO FAR:
 ${history}
 
-YOUR TASK FOR THIS TURN:
+${researchStr ? researchStr + '\n\n' : ''}YOUR TASK FOR THIS TURN:
 ${task || 'Give your expert perspective on the topic being discussed.'}
 
-CONTEXT REMINDER: You are advising the specific business above — not a generic business. Every keyword, tactic, channel, and recommendation must be relevant to their industry, services, and market. Using examples from unrelated industries (e.g. cleaning services when the client sells furniture) is a critical error.
+TOOL-FIRST INSTRUCTION: Before presenting conclusions, state what source your analysis is based on.
+If you are drawing from your research memory above, cite it. If you need live data (keyword volumes,
+SERP positions, audit scores), call the appropriate tool. Do not present recommendations as facts
+without identifying their source.
+
+CONTEXT REMINDER: You are advising the specific business above. Every keyword, tactic, and
+recommendation must be relevant to their actual industry, services, and market.
+Using examples from unrelated industries is a critical governance violation.
 
 TOOL USE:
 If real data would materially improve your answer, call a tool using this format:

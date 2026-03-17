@@ -6,6 +6,7 @@ const { createRedisConnection }    = require('./redis');
 const { callLLM }                  = require('./llm');
 const meetingStateLib              = require('./meeting-state');
 const workspaceMemory              = require('./workspace-memory');
+const { researchMemoryRead, researchMemoryAppend, formatResearchForPrompt } = require('./lu-memory');
 const { getWorkspaceContext, buildContextPrompt } = require('./lu-context');
 const { parseToolCall, executeTool, formatToolResult } = require('./tool-executor');
 const {
@@ -114,7 +115,10 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
             // Step 2 — build specialist prompt with tool defs
             const stateStr = meetingStateLib.formatStateForPrompt(meetingState);
             const memStr   = workspaceMemory.formatMemoryForPrompt(memory);
-            const prompt   = buildSpecialistPrompt(agentId, ctx, history, task, stateStr, memStr, deliberation);
+            // ── Governance: inject agent research memory ──────────────────
+            const research    = await researchMemoryRead(1, agentId).catch(() => null);
+            const researchStr = formatResearchForPrompt(agentId, research);
+            const prompt      = buildSpecialistPrompt(agentId, ctx, history, task, stateStr, memStr, deliberation, researchStr);
 
             const uMsg = attempt === 1
                 ? 'Give your expert response. If you need real data, use a tool.'
@@ -293,7 +297,22 @@ async function runRound(mid, ctx, specialists, tasks) {
         await setState(mid, `speaking_${agentId}`, { current_speaker: agentId });
         const fresh = await getMeeting(mid);
         const content = await callSpecialist(agentId, ctx, fresh.messages, task, mid, meetingState, memory);
-        if (content) { await postAgent(mid, agentId, content); await sleep(350); }
+        if (content) {
+            await postAgent(mid, agentId, content);
+            // ── Governance: store key research findings in agent memory ───
+            const keyLines = content.split(/[.!\n]/)
+                .map(l => l.trim())
+                .filter(l => l.length > 25 && l.length < 150)
+                .slice(0, 4);
+            if (keyLines.length) {
+                const researchField = {
+                    james: 'keywords', priya: 'content_gaps', marcus: 'content_formats',
+                    elena: 'pipeline_notes', alex: 'technical_notes', dmm: 'strategic_insights',
+                }[agentId] || 'strategic_insights';
+                researchMemoryAppend(1, agentId, { field: researchField, items: keyLines }).catch(() => {});
+            }
+            await sleep(350);
+        }
         await markSpoken(mid, agentId);
     }
 }
@@ -326,6 +345,10 @@ async function startMeeting(mid, ctx) {
         console.warn(`[MTG:${mid}] Context enrichment failed — using supplied ctx:`, e.message);
     }
 
+    // Ensure user_name persists in saved context for greeting
+    if (!enrichedCtx.user_name && enrichedCtx.businessName) {
+        enrichedCtx.user_name = '';  // will be empty if not logged in — Sarah adapts
+    }
     await saveMeeting(mid, {
         id: mid, topic: enrichedCtx.topic, type: enrichedCtx.type || 'brainstorm',
         context: enrichedCtx,

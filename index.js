@@ -29,6 +29,7 @@ console.log('[STARTUP] LevelUp Runtime v2.13.0 — Phase 1A');
 console.log('[STARTUP] REDIS_URL    :', process.env.REDIS_URL        ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] WP_SECRET          :', process.env.WP_SECRET          ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] SYNTHESIS_ENDPOINT :', process.env.SYNTHESIS_ENDPOINT ? 'SET ✓' : 'NOT SET — tasks will skip LLM synthesis');
+console.log('[STARTUP] WP_URL             :', process.env.WP_URL             ? 'SET ✓' : 'NOT SET ✗ — context fetches will fail (agents operate without business profile)');
 console.log('[STARTUP] LU_SECRET    :', process.env.LU_SECRET        ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] DEEPSEEK_KEY :', process.env.DEEPSEEK_API_KEY ? 'SET ✓' : 'NOT SET ✗');
 console.log('[STARTUP] Tools        :', registry.list().map(t=>t.name).join(', '));
