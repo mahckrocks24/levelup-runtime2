@@ -1,6 +1,6 @@
 'use strict';
 
-const { buildToolPromptBlock }                          = require('./tool-registry');
+const { buildToolPromptBlock, buildToolPromptBlockWithDiscovery } = require('./tool-registry');
 const { formatSiteContext, formatSiteSummaryBrief }     = require('./site-context');
 
 /**

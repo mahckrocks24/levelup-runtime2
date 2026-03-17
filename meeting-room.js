@@ -6,7 +6,7 @@ const { createRedisConnection }    = require('./redis');
 const { callLLM }                  = require('./llm');
 const meetingStateLib              = require('./meeting-state');
 const workspaceMemory              = require('./workspace-memory');
-const { researchMemoryRead, researchMemoryAppend, formatResearchForPrompt } = require('./lu-memory');
+const { recentTaskMemory, longTermReadAll } = require('./lu-memory');
 const { rankMemories, formatRankedMemory } = require('./memory-ranking');
 const { fetchSiteContext, formatSiteContext, formatSiteSummaryBrief } = require('./site-context');
 const { readInsights, refreshInsights, formatCampaignInsights } = require('./campaign-learning');
@@ -125,8 +125,13 @@ async function callSpecialist(agentId, ctx, history, task, mid, meetingState, me
             const stateStr = meetingStateLib.formatStateForPrompt(meetingState);
             const memStr   = workspaceMemory.formatMemoryForPrompt(memory);
             // ── Governance: inject agent research memory ──────────────────
-            const research    = await researchMemoryRead(1, agentId).catch(() => null);
-            const researchStr = formatResearchForPrompt(agentId, research);
+            // Research memory: use recentTaskMemory (what lu-memory actually exports)
+            const agentTasks  = await recentTaskMemory(5).catch(() => []);
+            const researchStr = agentTasks.length
+                ? 'RECENT WORK BY THIS AGENT:\n' + agentTasks
+                    .map(t => `- ${t.title || 'Task'}: ${(t.output_summary || '').slice(0, 150)}`)
+                    .filter(Boolean).join('\n')
+                : '';
             // Ranked task memory — uses semantic scoring to surface most relevant past work
             const recentTasks  = (await workspaceMemory.getMemory(1).catch(() => ({}))).recent_tasks || [];
             const taskKeywords = typeof task === 'string' ? task : '';
@@ -337,7 +342,7 @@ async function runRound(mid, ctx, specialists, tasks, siteCtxStr = '') {
                     james: 'keywords', priya: 'content_gaps', marcus: 'content_formats',
                     elena: 'pipeline_notes', alex: 'technical_notes', dmm: 'strategic_insights',
                 }[agentId] || 'strategic_insights';
-                researchMemoryAppend(1, agentId, { field: researchField, items: keyLines }).catch(() => {});
+                // researchMemoryAppend removed — function does not exist in lu-memory exports
             }
             await sleep(350);
         }
