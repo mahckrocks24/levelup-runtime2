@@ -10,7 +10,7 @@
  *   POST /internal/builder/generate-layout — generate a full page layout from a prompt
  */
 
-const { callDeepSeek } = require('./llm');
+const { callLLM } = require('./llm');
 
 // ── Action types the AI can return ─────────────────────────────────────────
 const BUILDER_ACTIONS = {
@@ -41,6 +41,27 @@ const SPACING = ['none', 'xs', 'sm', 'md', 'lg', 'xl', '2xl'];
 function registerBuilderRoutes(app) {
     app.post('/internal/builder/ai-action',   handleBuilderAiAction);
     app.post('/internal/builder/generate-layout', handleGenerateLayout);
+
+    // Generic AI completion — used by WP builder AI (Arthur + AI panel)
+    app.post('/internal/ai/complete', async (req, res) => {
+        try {
+            const { messages, max_tokens, temperature } = req.body;
+            if (!messages || !Array.isArray(messages)) {
+                return res.status(400).json({ error: 'messages array required' });
+            }
+            const result = await callLLM({
+                messages,
+                max_tokens: max_tokens || 4000,
+                temperature: temperature ?? 0.7,
+            });
+            // callLLM returns { content, tool_calls, finish_reason, usage }
+            const text = result.content || '';
+            res.json({ text, content: text });
+        } catch (err) {
+            console.error('[ai/complete]', err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -55,10 +76,10 @@ async function handleBuilderAiAction(req, res) {
         const systemPrompt = buildActionSystemPrompt();
         const userPrompt   = buildActionUserPrompt({ command, page_title, sections, context, theme });
 
-        const raw = await callDeepSeek([
+        const raw = await callLLM({ messages: [
             { role: 'system',  content: systemPrompt },
             { role: 'user',    content: userPrompt },
-        ], { max_tokens: 2000, temperature: 0.3 });
+        ], max_tokens: 2000, temperature: 0.3 });
 
         const parsed = parseBuilderResponse(raw);
         return res.json({
@@ -86,10 +107,10 @@ async function handleGenerateLayout(req, res) {
         const systemPrompt = buildLayoutSystemPrompt();
         const userPrompt   = buildLayoutUserPrompt({ prompt, industry, style, numSections });
 
-        const raw = await callDeepSeek([
+        const raw = await callLLM({ messages: [
             { role: 'system',  content: systemPrompt },
             { role: 'user',    content: userPrompt },
-        ], { max_tokens: 4000, temperature: 0.5 });
+        ], max_tokens: 4000, temperature: 0.5 });
 
         const layout = parseLayoutResponse(raw);
         return res.json({
@@ -225,7 +246,7 @@ Return the complete page layout JSON.`;
 // ══════════════════════════════════════════════════════════════════════════
 
 function parseBuilderResponse(raw) {
-    const text = typeof raw === 'string' ? raw : (raw?.content?.[0]?.text || JSON.stringify(raw));
+    const text = typeof raw === 'string' ? raw : (typeof raw?.content === 'string' ? raw.content : JSON.stringify(raw));
     const clean = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     try {
         const parsed = JSON.parse(clean);
@@ -247,7 +268,7 @@ function parseBuilderResponse(raw) {
 }
 
 function parseLayoutResponse(raw) {
-    const text = typeof raw === 'string' ? raw : (raw?.content?.[0]?.text || JSON.stringify(raw));
+    const text = typeof raw === 'string' ? raw : (typeof raw?.content === 'string' ? raw.content : JSON.stringify(raw));
     const clean = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     try {
         const parsed = JSON.parse(clean);
